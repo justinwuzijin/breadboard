@@ -347,7 +347,7 @@ body {
   z-index: 12;
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: 7px;
 }
 #zoom-controls button {
   width: auto;
@@ -355,7 +355,7 @@ body {
   display: inline;
   border: none;
   cursor: pointer;
-  font: 400 0.72rem 'Inter', sans-serif;
+  font: 400 0.92rem 'Inter', sans-serif;
   line-height: 1;
   color: rgba(0, 0, 0, 0.48);
   background: transparent;
@@ -363,14 +363,14 @@ body {
   -webkit-backdrop-filter: none;
   border-radius: 0;
   box-shadow: none;
-  padding: 0 2px;
+  padding: 0 3px;
   transition: color 0.15s;
 }
 #zoom-controls button:hover { background: transparent; color: rgba(0, 0, 0, 0.75); }
 #zoom-pct {
   min-width: 0;
   text-align: center;
-  font: 400 0.58rem 'Inter', sans-serif;
+  font: 400 0.72rem 'Inter', sans-serif;
   letter-spacing: 0;
   color: rgba(0, 0, 0, 0.48);
   background: transparent;
