@@ -1,9 +1,9 @@
 // Breadboard simulator: palette, placement, wiring, inspector, sim loop.
 
-import { P, E, BODY, buildBoard, nearestHole, HOLE_BY_ID, baseNetOf } from './board.js?v=3';
-import { CATALOG, DEF_BY_ID, WIRE_COLORS, fmtOhm } from './parts.js?v=33';
-import { runSim, portNode } from './sim.js?v=3';
-import { importFromSim, exportBreadboardToText } from './bridge.js?v=10';
+import { P, E, BODY, buildBoard, nearestHole, HOLE_BY_ID, baseNetOf } from './board.js';
+import { CATALOG, DEF_BY_ID, WIRE_COLORS, fmtOhm } from './parts.js';
+import { runSim, portNode } from './sim.js';
+import { importFromSim, exportBreadboardToText } from './bridge.js';
 
 const svg = document.getElementById('canvas');
 const world = document.getElementById('world');

@@ -2,7 +2,7 @@
 // Board parts use pitch-unit pin offsets from the anchor pin (0,0) and snap to
 // holes. Free parts live off-board and expose snappable "ports" for wires.
 
-import { P, E, HOLE_BY_ID } from './board.js?v=3';
+import { P, E, HOLE_BY_ID } from './board.js';
 
 // ---- shared art helpers -----------------------------------------------------
 

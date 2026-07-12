@@ -2,8 +2,8 @@
 // Import uses live CircuitJS element posts (accurate gate pin geometry).
 // Export rebuilds a conventional gate-level schematic from the breadboard.
 
-import { BODY, HOLE_BY_ID, baseNetOf, COLS, RAIL_COUNT } from './board.js?v=3';
-import { CATALOG, DEF_BY_ID } from './parts.js?v=33';
+import { BODY, HOLE_BY_ID, baseNetOf, COLS, RAIL_COUNT } from './board.js';
+import { CATALOG, DEF_BY_ID } from './parts.js';
 
 // ---- gate / IC packing tables ------------------------------------------------
 
