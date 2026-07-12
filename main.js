@@ -35,7 +35,7 @@ function applyView() {
 
 // zoom in/out in ~15% multiplicative steps, anchored on the canvas center
 function zoomStep(dir) {
-  const cx = stage.clientWidth / 2, cy = stage.clientHeight / 2;
+  const cx = svg.clientWidth / 2, cy = svg.clientHeight / 2;
   const k0 = view.k;
   const factor = dir > 0 ? 1.15 : 1 / 1.15;
   let k1 = Math.min(3, Math.max(0.25, k0 * factor));
@@ -96,20 +96,19 @@ function contentBounds() {
 
 /** Fit and center all parts in the visible stage area (accounts for open panels). */
 function fitView() {
-  const stageRect = stage.getBoundingClientRect();
-  let vw = stageRect.width;
-  let vh = stageRect.height;
+  const canvasRect = svg.getBoundingClientRect();
+  let vw = canvasRect.width;
+  let vh = canvasRect.height;
   if (vw < 40 || vh < 40) return;
 
   // Serial monitor sits over the bottom — subtract any overlap
   const serialEl = document.getElementById('serial-monitor');
   if (appEl.classList.contains('serial-open') && serialEl) {
     const serRect = serialEl.getBoundingClientRect();
-    const overlapY = Math.max(0, stageRect.bottom - serRect.top);
+    const overlapY = Math.max(0, canvasRect.bottom - serRect.top);
     vh = Math.max(80, vh - overlapY);
   }
 
-  const narrow = appEl.classList.contains('schematic-open');
   const b = contentBounds();
   // Reserve chrome so the board centers in the clear canvas under the wirebar
   const padL = 48;
@@ -1174,7 +1173,7 @@ function saveSoon() {
 }
 function save() {
   const data = {
-    name: document.getElementById('projname').value,
+    name: document.getElementById('projname').value.trim() || 'untitled circuit',
     parts: state.parts.map((p) => ({
       def: p.def.id, props: p.props, rot: p.rot || 0, ang: p.ang || 0,
       holes: p.holes || null, x: p.x, y: p.y,
@@ -1189,8 +1188,17 @@ function save() {
   return data;
 }
 function projectFileBase() {
-  const raw = (document.getElementById('projname')?.value || 'untitled').trim() || 'untitled';
-  return raw.replace(/[^\w\-]+/g, '-').replace(/^-+|-+$/g, '') || 'untitled';
+  const raw = (document.getElementById('projname')?.value || 'untitled circuit').trim() || 'untitled circuit';
+  return raw
+    .replace(/[''′]/g, '')
+    .replace(/[^\w\-]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    || 'untitled-circuit';
+}
+function exportPngName(kind) {
+  // kind: 'breadboard' | 'circuit' → e.g. untitled-circuit-breadboard.png
+  return `${projectFileBase()}-${kind}.png`;
 }
 function downloadBlob(filename, blob) {
   const url = URL.createObjectURL(blob);
@@ -1451,9 +1459,17 @@ document.getElementById('menu-toggle').addEventListener('click', () => {
 });
 (() => {
   const el = document.getElementById('projname');
+  const DEFAULT_NAME = 'untitled circuit';
+  const ensureName = () => {
+    if (!el.value.trim()) {
+      el.value = DEFAULT_NAME;
+      fitProjName(el);
+    }
+  };
   const fit = () => fitProjName(el);
   el.addEventListener('input', () => { fit(); saveSoon(); });
-  el.addEventListener('change', saveSoon);
+  el.addEventListener('change', () => { ensureName(); saveSoon(); });
+  el.addEventListener('blur', () => { ensureName(); saveSoon(); });
   // Fonts may load after first paint — remeasure once ready
   if (document.fonts?.ready) document.fonts.ready.then(fit);
   fit();
@@ -1517,7 +1533,7 @@ document.getElementById('export-circuit').addEventListener('click', async () => 
       if (!cjSim) hookCircuitJS();
     }
     const blob = await exportCircuitPng();
-    downloadBlob(`${projectFileBase()}-circuit.png`, blob);
+    downloadBlob(exportPngName('circuit'), blob);
     if (status) status.textContent = 'exported circuit png';
   } catch (err) {
     if (status) status.textContent = err?.message || 'could not export circuit';
@@ -1529,7 +1545,7 @@ document.getElementById('export-breadboard').addEventListener('click', async () 
   const status = document.getElementById('bridge-status');
   try {
     const blob = await exportBreadboardPng();
-    downloadBlob(`${projectFileBase()}-breadboard.png`, blob);
+    downloadBlob(exportPngName('breadboard'), blob);
     if (status) status.textContent = 'exported breadboard png';
   } catch (err) {
     if (status) status.textContent = err?.message || 'could not export breadboard';

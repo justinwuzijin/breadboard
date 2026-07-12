@@ -349,8 +349,9 @@ export function buildBreadboard(circuit, api) {
   // Hole occupancy: part pins + each wire end get a unique hole (breadboard rule).
   const occupied = new Set();
   const markHoles = (holes) => { for (const h of holes || []) if (h) occupied.add(h); };
-  const TOP_TAP = ['a', 'b', 'c', 'd']; // leave e for DIP / button pins
-  const BOT_TAP = ['j', 'i', 'h', 'g']; // leave f for DIP / button pins
+  // Prefer free rows; include e/f as last resort so dense builds still get jumpers
+  const TOP_TAP = ['a', 'b', 'c', 'd', 'e'];
+  const BOT_TAP = ['j', 'i', 'h', 'g', 'f'];
   const allocTap = (col, top) => {
     if (col < 1 || col > COLS) return null;
     for (const r of (top ? TOP_TAP : BOT_TAP)) {
@@ -376,13 +377,16 @@ export function buildBreadboard(circuit, api) {
   };
 
   const netHome = new Map();
+  const netPinHole = new Map(); // schematic net root → IC / part pin hole (for direct wires)
   const powerPlus = new Map();  // key col:top → {col,top}
   const powerMinus = new Map();
   const jumpers = [];
-  const registerNet = (root, col, top) => {
+  const signalWires = []; // { a: holeId, b: holeId } — IC pin → LED/resistor, etc.
+  const registerNet = (root, col, top, pinHole = null) => {
     if (col < 1 || col > COLS) return;
     if (isGroundR(root)) { powerMinus.set(`${col}:${top ? 1 : 0}`, { col, top }); return; }
     if (isPlusR(root)) { powerPlus.set(`${col}:${top ? 1 : 0}`, { col, top }); return; }
+    if (pinHole && !netPinHole.has(root)) netPinHole.set(root, pinHole);
     if (netHome.has(root)) {
       const h = netHome.get(root);
       if (h.col !== col || h.top !== top) jumpers.push({ a: h, b: { col, top } });
@@ -472,16 +476,16 @@ export function buildBreadboard(circuit, api) {
       const inputNet = find(gate.inputs[i]);
       const hole = icInst.holes[pins.input[i]];
       const holeCol = parseInt(hole.match(/\d+/)[0], 10);
-      registerNet(inputNet, holeCol, hole.endsWith('e'));
+      registerNet(inputNet, holeCol, hole.endsWith('e'), hole);
     }
     const outputNet = find(gate.output);
     const outHole = icInst.holes[pins.output];
-    registerNet(outputNet, parseInt(outHole.match(/\d+/)[0], 10), outHole.endsWith('e'));
+    registerNet(outputNet, parseInt(outHole.match(/\d+/)[0], 10), outHole.endsWith('e'), outHole);
 
     if (chip.type === 'dff') {
       if (gate.rst) {
         const h = icInst.holes[pins.rst];
-        registerNet(find(gate.rst), parseInt(h.match(/\d+/)[0], 10), h.endsWith('e'));
+        registerNet(find(gate.rst), parseInt(h.match(/\d+/)[0], 10), h.endsWith('e'), h);
       } else if (pins.rst != null) {
         const h = icInst.holes[pins.rst];
         powerMinus.set(
@@ -491,7 +495,7 @@ export function buildBreadboard(circuit, api) {
       }
       if (gate.set) {
         const h = icInst.holes[pins.set];
-        registerNet(find(gate.set), parseInt(h.match(/\d+/)[0], 10), h.endsWith('e'));
+        registerNet(find(gate.set), parseInt(h.match(/\d+/)[0], 10), h.endsWith('e'), h);
       } else if (pins.set != null) {
         const h = icInst.holes[pins.set];
         powerMinus.set(
@@ -535,6 +539,7 @@ export function buildBreadboard(circuit, api) {
   for (const p of icPlacements) {
     for (let k = 0; k < 7; k++) icColSet.add(p.col + k);
   }
+  const icRight = icPlacements.reduce((m, p) => Math.max(m, p.col + 6), swCursor);
   const findLedSlot = () => {
     // resistor pins span 3 cols; LED uses adjacent pair on the far end → need c0..c0+4
     const tryCol = (c) => {
@@ -546,7 +551,11 @@ export function buildBreadboard(circuit, api) {
       if (holes.some((h) => occupied.has(h) || !HOLE_BY_ID.has(h))) return null;
       return c;
     };
-    // Prefer the right side (past ICs), then scan left
+    // Prefer just past the rightmost IC (short jumpers), then scan right, then left
+    for (let c = icRight + 1; c <= COLS - 4; c++) {
+      const hit = tryCol(c);
+      if (hit != null) return hit;
+    }
     for (let c = COLS - 4; c >= 1; c--) {
       const hit = tryCol(c);
       if (hit != null) return hit;
@@ -596,8 +605,16 @@ export function buildBreadboard(circuit, api) {
     api.addPart(series, { holes: rHoles, rot: 0, props: { ohms: series.props?.ohms || ohms } });
     api.addPart(DEF_BY_ID.get('led'), { holes: lHoles, rot: 0 });
     markHoles([...rHoles, ...lHoles]);
-    // Signal feeds the resistor's free end (c0); LED cathode column goes to GND
-    registerNet(signalNet, c0, true);
+    // Signal feeds the resistor's free end (column c0); cathode column → GND.
+    // Wire IC output pin → resistor column directly so LEDs always light.
+    const tap = allocTap(c0, true);
+    const src = netPinHole.get(signalNet);
+    if (src && tap) {
+      signalWires.push({ a: src, b: tap });
+    } else {
+      // No IC pin known yet — fall back to deferred jumper between net homes
+      registerNet(signalNet, c0, true);
+    }
     powerMinus.set(`${c0 + 4}:1`, { col: c0 + 4, top: true });
     placed.r++;
     placed.led++;
@@ -635,6 +652,9 @@ export function buildBreadboard(circuit, api) {
     }
   }
   let ci = 0;
+  for (const sw of signalWires) {
+    safeWire({ hole: sw.a }, { hole: sw.b }, NET_COLORS[ci++ % NET_COLORS.length]);
+  }
   for (const j of jumpers) {
     const ha = allocTap(j.a.col, j.a.top);
     const hb = allocTap(j.b.col, j.b.top);
@@ -807,11 +827,13 @@ export function exportBreadboardToText(state) {
   for (const led of passives.filter((p) => p.kind === 'led')) {
     // Import places: gateOut --Rseries-- LED+ --> LED- --> GND
     const series = passives.find((p) =>
-      p.kind === 'r' && (p.a === led.a || p.b === led.a) && p.ohms <= 2000);
+      p.kind === 'r' && (p.a === led.a || p.b === led.a) && p.ohms <= 5000);
     if (!series) continue;
     const driveNet = series.a === led.a ? series.b : series.a;
-    if (!gateOutNets.has(driveNet) && !gateOutNets.has(led.a)) continue;
-    const signal = gateOutNets.has(driveNet) ? driveNet : led.a;
+    if (!gateOutNets.has(driveNet) && !gateOutNets.has(led.a) && !gateOutNets.has(led.b)) continue;
+    const signal = gateOutNets.has(driveNet) ? driveNet
+      : gateOutNets.has(led.a) ? led.a
+      : led.b;
     logicIO.push({ kind: 'lout', net: signal });
     skipPassive.add(led);
     skipPassive.add(series);
@@ -976,6 +998,13 @@ export function exportBreadboardToText(state) {
   for (const io of uniqIO) {
     const pt = netXY.get(io.net);
     if (pt) addTerm(io.net, pt.x, pt.y);
+  }
+  // Include any remaining R/LED terminals so gate→LED nets get solid wires
+  for (const p of emitPassives) {
+    if (p.kind !== 'r' && p.kind !== 'led') continue;
+    const pa = netXY.get(p.a), pb = netXY.get(p.b);
+    if (pa) addTerm(p.a, pa.x, pa.y);
+    if (pb) addTerm(p.b, pb.x, pb.y);
   }
   if (plusNet) {
     const p = netXY.get(plusNet);

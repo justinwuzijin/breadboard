@@ -12,13 +12,6 @@
 </head>
 <body>
 
-  <header id="topbar">
-    <div class="tb-left">
-      <input id="projname" value="untitled circuit" spellcheck="false" />
-    </div>
-    <div class="tb-right"></div>
-  </header>
-
   <div id="app">
     <button id="menu-toggle" title="hide/show parts" aria-label="toggle parts panel">
       <svg class="tab-chevron" viewBox="0 0 8 12" width="8" height="12" aria-hidden="true">
@@ -30,6 +23,25 @@
     </aside>
 
     <div id="stage">
+      <header id="topbar">
+        <div class="tb-left">
+          <input id="projname" value="untitled circuit" spellcheck="false" />
+        </div>
+        <div class="tb-right">
+          <div id="canvas-tools">
+            <button id="btn-clear" title="reset the board" aria-label="reset the board">reset</button>
+            <div class="cx-export" id="cx-export">
+              <button type="button" class="cx-export-btn" aria-haspopup="true" aria-expanded="false">export</button>
+              <div class="cx-export-menu" role="menu">
+                <button type="button" role="menuitem" id="export-circuit">circuit</button>
+                <button type="button" role="menuitem" id="export-breadboard">breadboard</button>
+              </div>
+            </div>
+            <button type="button" id="build-sch" title="Build between breadboard and schematic">build</button>
+          </div>
+        </div>
+      </header>
+      <div id="stage-body">
       <svg id="canvas" tabindex="0">
         <defs>
           <radialGradient id="holeG" cx="50%" cy="42%" r="60%">
@@ -146,24 +158,14 @@
           </label>
         </div>
       </div>
-      <div id="canvas-tools">
-        <button id="btn-clear" title="reset the board" aria-label="reset the board">reset</button>
-        <div class="cx-export" id="cx-export">
-          <button type="button" class="cx-export-btn" aria-haspopup="true" aria-expanded="false">export</button>
-          <div class="cx-export-menu" role="menu">
-            <button type="button" role="menuitem" id="export-circuit">circuit</button>
-            <button type="button" role="menuitem" id="export-breadboard">breadboard</button>
-          </div>
-        </div>
-        <button type="button" id="build-sch" title="Build between breadboard and schematic">build</button>
-      </div>
       <div id="zoom-controls">
         <button id="zoom-out" title="zoom out" aria-label="zoom out">&#8722;</button>
         <span id="zoom-pct">100%</span>
         <button id="zoom-in" title="zoom in" aria-label="zoom in">+</button>
       </div>
       <div id="inspector" hidden></div>
-      <div id="credits">designed and built by <a class="credit-name" href="https://www.justinzwu.com/" target="_blank" rel="noopener noreferrer">justin wu</a>. to expedite <a class="credit-name" href="https://uwflow.com/course/syde192l" target="_blank" rel="noopener noreferrer">192l</a>.</div>
+      <div id="credits">designed and built by <a class="credit-name" href="https://www.justinzwu.com/" target="_blank" rel="noopener noreferrer">justin wu</a> to expedite <a class="credit-name" href="https://uwflow.com/course/syde192l" target="_blank" rel="noopener noreferrer">192l</a>.</div>
+      </div>
     </div>
 
     <button id="circuit-toggle" title="hide/show circuit" aria-label="toggle circuit panel">
