@@ -1558,14 +1558,9 @@ document.getElementById('circuit-toggle').addEventListener('click', () => {
   appEl.classList.toggle('schematic-open');
   fitDuring(360);
 });
-document.getElementById('sch-close').addEventListener('click', () => {
-  schEl.classList.remove('open');
-  appEl.classList.remove('schematic-open');
-  fitDuring(360);
-});
 schEl.addEventListener('transitionend', (e) => {
   if (e.target !== schEl) return;
-  if (e.propertyName === 'margin-right' || e.propertyName === 'opacity') {
+  if (e.propertyName === 'margin-right') {
     fitView();
   }
 });
