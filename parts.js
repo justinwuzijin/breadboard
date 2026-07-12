@@ -496,15 +496,24 @@ export const CATALOG = [
   {
     id: 'arduino', cat: 'power', name: 'arduino uno', kind: 'free',
     ports: (() => {
-      // Pin centers calibrated to img/arduino-smd.png header holes
-      const topY = 211, botY = 791;
+      // Pin centers calibrated to img/arduino-smd.png header holes.
+      // Bottom power/analog X were ~1.5 pitches too far left — remeasured from PNG.
+      const topY = 211, botY = 805;
       const dig13to8 = [473, 504, 535, 566, 597, 628]; // left→right
       const dig7to0 = [677, 708, 739, 770, 801, 832, 863, 894]; // left→right
-      // POWER L→R: IOREF, RESET, 3.3V, 5V, GND, GND, Vin
-      const power = [414, 445, 476, 507, 538, 569, 600];
-      // ANALOG IN L→R: A0…A5 (real board order)
-      const analog = [738, 769, 800, 831, 862, 893];
+      // POWER L→R: IOREF, RESET, 3.3V, 5V, GND, GND, Vin (PNG x+51 → imgX)
+      const power = [462, 493, 524, 555, 586, 617, 648];
+      // ANALOG IN L→R: A0…A5
+      const analog = [742, 773, 804, 835, 866, 897];
+      // DIGITAL header left of D13: AREF, GND (same 0.1" pitch as dig13to8)
+      const digGndX = dig13to8[0] - 31;
       const ports = [];
+
+      // GND next to pin 13 (top header) — common place to grab ground
+      {
+        const [x, y] = mapArduinoPin(digGndX, topY);
+        ports.push({ x, y, name: 'GND3', volts: 0 });
+      }
 
       dig7to0.forEach((imgX, i) => {
         const [x, y] = mapArduinoPin(imgX, topY);

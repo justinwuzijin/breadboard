@@ -572,7 +572,7 @@ function buildInspector() {
       const b = document.createElement('button');
       b.textContent = inst.props.closed ? 'on' : 'off';
       b.className = '';
-      b.style.cssText = 'border:none;border-radius:7px;padding:4px 12px;cursor:pointer;background:rgba(0,0,0,0.07)';
+      b.style.cssText = 'border:none;border-radius:4px;padding:4px 12px;cursor:pointer;background:rgba(0,0,0,0.07)';
       b.onclick = () => { inst.props.closed = !inst.props.closed; b.textContent = inst.props.closed ? 'on' : 'off'; saveSoon(); };
       row.appendChild(b);
     }
@@ -580,7 +580,7 @@ function buildInspector() {
       const row = insRow(inspector, 'throw');
       const b = document.createElement('button');
       b.textContent = inst.props.side;
-      b.style.cssText = 'border:none;border-radius:7px;padding:4px 12px;cursor:pointer;background:rgba(0,0,0,0.07)';
+      b.style.cssText = 'border:none;border-radius:4px;padding:4px 12px;cursor:pointer;background:rgba(0,0,0,0.07)';
       b.onclick = () => { inst.props.side = inst.props.side === 'l' ? 'r' : 'l'; b.textContent = inst.props.side; saveSoon(); };
       row.appendChild(b);
     }
@@ -1186,6 +1186,146 @@ function save() {
     })),
   };
   try { localStorage.setItem(SAVE_KEY, JSON.stringify(data)); } catch (_) { /* full/blocked */ }
+  return data;
+}
+function projectFileBase() {
+  const raw = (document.getElementById('projname')?.value || 'untitled').trim() || 'untitled';
+  return raw.replace(/[^\w\-]+/g, '-').replace(/^-+|-+$/g, '') || 'untitled';
+}
+function downloadBlob(filename, blob) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+async function inlineSvgImages(root) {
+  const imgs = [...root.querySelectorAll('image')];
+  await Promise.all(imgs.map(async (im) => {
+    const href = im.getAttribute('href') || im.getAttributeNS('http://www.w3.org/1999/xlink', 'href');
+    if (!href || href.startsWith('data:')) return;
+    try {
+      const res = await fetch(href);
+      const blob = await res.blob();
+      const dataUrl = await new Promise((resolve, reject) => {
+        const r = new FileReader();
+        r.onload = () => resolve(r.result);
+        r.onerror = reject;
+        r.readAsDataURL(blob);
+      });
+      im.setAttribute('href', dataUrl);
+      im.setAttributeNS('http://www.w3.org/1999/xlink', 'href', dataUrl);
+    } catch (_) { /* leave external href */ }
+  }));
+}
+function svgStringToPngBlob(svgText, opts = {}) {
+  const pad = opts.pad ?? 48;
+  const bg = opts.bg ?? '#f6f5f2';
+  const scale = opts.scale ?? 2;
+  return new Promise(async (resolve, reject) => {
+    try {
+      const doc = new DOMParser().parseFromString(svgText, 'image/svg+xml');
+      const root = doc.documentElement;
+      if (root.querySelector('parsererror')) throw new Error('invalid svg');
+
+      let vb = root.getAttribute('viewBox');
+      let minX, minY, vbW, vbH;
+      if (vb) {
+        const p = vb.trim().split(/[\s,]+/).map(Number);
+        [minX, minY, vbW, vbH] = p;
+      } else {
+        vbW = parseFloat(root.getAttribute('width')) || 800;
+        vbH = parseFloat(root.getAttribute('height')) || 600;
+        minX = 0; minY = 0;
+      }
+      const outW = vbW + pad * 2;
+      const outH = vbH + pad * 2;
+      root.setAttribute('viewBox', `${minX - pad} ${minY - pad} ${outW} ${outH}`);
+      root.setAttribute('width', String(Math.round(outW * scale)));
+      root.setAttribute('height', String(Math.round(outH * scale)));
+
+      const bgRect = doc.createElementNS('http://www.w3.org/2000/svg', 'rect');
+      bgRect.setAttribute('x', String(minX - pad));
+      bgRect.setAttribute('y', String(minY - pad));
+      bgRect.setAttribute('width', String(outW));
+      bgRect.setAttribute('height', String(outH));
+      bgRect.setAttribute('fill', bg);
+      root.insertBefore(bgRect, root.firstChild);
+
+      await inlineSvgImages(root);
+      const xml = new XMLSerializer().serializeToString(root);
+      const url = URL.createObjectURL(new Blob([xml], { type: 'image/svg+xml;charset=utf-8' }));
+      const img = new Image();
+      img.onload = () => {
+        try {
+          const canvas = document.createElement('canvas');
+          canvas.width = Math.round(outW * scale);
+          canvas.height = Math.round(outH * scale);
+          const ctx = canvas.getContext('2d');
+          ctx.fillStyle = bg;
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+          ctx.drawImage(img, 0, 0);
+          URL.revokeObjectURL(url);
+          canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error('png failed'))), 'image/png');
+        } catch (err) {
+          URL.revokeObjectURL(url);
+          reject(err);
+        }
+      };
+      img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('svg rasterize failed')); };
+      img.src = url;
+    } catch (err) {
+      reject(err);
+    }
+  });
+}
+async function exportBreadboardPng() {
+  const b = contentBounds();
+  const clone = svg.cloneNode(true);
+  // Drop transient UI chrome from the export
+  clone.querySelector('#selbox')?.remove();
+  clone.querySelector('#hint')?.remove();
+  const pad = 48;
+  clone.setAttribute('viewBox', `${b.minX - pad} ${b.minY - pad} ${b.w + pad * 2} ${b.h + pad * 2}`);
+  clone.removeAttribute('width');
+  clone.removeAttribute('height');
+  const xml = new XMLSerializer().serializeToString(clone);
+  return svgStringToPngBlob(xml, { pad: 0, bg: '#f6f5f2', scale: 2 });
+}
+function exportCircuitPng() {
+  return new Promise((resolve, reject) => {
+    if (!cjSim) hookCircuitJS();
+    if (!cjSim || typeof cjSim.getCircuitAsSVG !== 'function') {
+      reject(new Error('simulator still loading'));
+      return;
+    }
+    const prev = cjSim.onsvgrendered;
+    const timer = setTimeout(() => {
+      cjSim.onsvgrendered = prev;
+      reject(new Error('circuit export timed out'));
+    }, 8000);
+    cjSim.onsvgrendered = async (_sim, svgStr) => {
+      clearTimeout(timer);
+      cjSim.onsvgrendered = prev;
+      try {
+        if (!svgStr) throw new Error('empty circuit');
+        const blob = await svgStringToPngBlob(svgStr, { pad: 48, bg: '#ffffff', scale: 2 });
+        resolve(blob);
+      } catch (err) {
+        reject(err);
+      }
+    };
+    try {
+      cjSim.getCircuitAsSVG();
+    } catch (err) {
+      clearTimeout(timer);
+      cjSim.onsvgrendered = prev;
+      reject(err);
+    }
+  });
 }
 function load() {
   let data = null;
@@ -1322,7 +1462,38 @@ function hookCircuitJS() {
 schFrame.addEventListener('load', hookCircuitJS);
 hookCircuitJS();
 
-document.getElementById('btn-schematic').addEventListener('click', () => {
+document.getElementById('export-circuit').addEventListener('click', async () => {
+  const status = document.getElementById('bridge-status');
+  try {
+    if (!schEl.classList.contains('open')) {
+      schEl.classList.add('open');
+      appEl.classList.add('schematic-open');
+      fitDuring(360);
+      await new Promise((r) => setTimeout(r, 400));
+      if (!cjSim) hookCircuitJS();
+    }
+    const blob = await exportCircuitPng();
+    downloadBlob(`${projectFileBase()}-circuit.png`, blob);
+    if (status) status.textContent = 'exported circuit png';
+  } catch (err) {
+    if (status) status.textContent = err?.message || 'could not export circuit';
+    console.error(err);
+  }
+});
+
+document.getElementById('export-breadboard').addEventListener('click', async () => {
+  const status = document.getElementById('bridge-status');
+  try {
+    const blob = await exportBreadboardPng();
+    downloadBlob(`${projectFileBase()}-breadboard.png`, blob);
+    if (status) status.textContent = 'exported breadboard png';
+  } catch (err) {
+    if (status) status.textContent = err?.message || 'could not export breadboard';
+    console.error(err);
+  }
+});
+
+document.getElementById('circuit-toggle').addEventListener('click', () => {
   schEl.classList.toggle('open');
   appEl.classList.toggle('schematic-open');
   fitDuring(360);
@@ -1338,45 +1509,47 @@ schEl.addEventListener('transitionend', (e) => {
     fitView();
   }
 });
-document.getElementById('build-bb').addEventListener('click', () => {
-  const status = document.getElementById('bridge-status');
-  if (!cjSim) hookCircuitJS();
-  if (!cjSim || typeof cjSim.getElements !== 'function') {
-    status.textContent = 'simulator still loading \u2014 try again in a moment';
-    return;
-  }
-  try {
-    status.textContent = importFromSim(cjSim, {
-      addPart,
-      addWire,
-      clearBoard: () => document.getElementById('btn-clear').click(),
-    });
-    fitView();
-  } catch (err) {
-    status.textContent = 'could not read the circuit';
-    console.error(err);
-  }
-});
 
+function openSchematicPanel() {
+  if (!schEl.classList.contains('open')) {
+    schEl.classList.add('open');
+    appEl.classList.add('schematic-open');
+    fitDuring(360);
+  }
+}
+
+// Single Build control (canvas): schematic open → place on board; else → export to schematic
 document.getElementById('build-sch').addEventListener('click', () => {
   const status = document.getElementById('bridge-status');
   if (!cjSim) hookCircuitJS();
-  if (!cjSim || typeof cjSim.importCircuit !== 'function') {
-    if (!schEl.classList.contains('open')) {
-      schEl.classList.add('open');
-      appEl.classList.add('schematic-open');
-      fitDuring(360);
+
+  if (schEl.classList.contains('open')) {
+    if (!cjSim || typeof cjSim.getElements !== 'function') {
+      status.textContent = 'simulator still loading \u2014 try again in a moment';
+      return;
     }
+    try {
+      status.textContent = importFromSim(cjSim, {
+        addPart,
+        addWire,
+        clearBoard: () => document.getElementById('btn-clear').click(),
+      });
+      fitView();
+    } catch (err) {
+      status.textContent = 'could not read the circuit';
+      console.error(err);
+    }
+    return;
+  }
+
+  if (!cjSim || typeof cjSim.importCircuit !== 'function') {
+    openSchematicPanel();
     status.textContent = 'simulator still loading \u2014 try again in a moment';
     return;
   }
   try {
     const { text, message } = exportBreadboardToText(state);
-    if (!schEl.classList.contains('open')) {
-      schEl.classList.add('open');
-      appEl.classList.add('schematic-open');
-      fitDuring(360);
-    }
+    openSchematicPanel();
     if (!text) {
       status.textContent = message;
       return;
@@ -1384,46 +1557,10 @@ document.getElementById('build-sch').addEventListener('click', () => {
     cjSim.importCircuit(text);
     status.textContent = message;
   } catch (err) {
-    if (!schEl.classList.contains('open')) {
-      schEl.classList.add('open');
-      appEl.classList.add('schematic-open');
-      fitDuring(360);
-    }
+    openSchematicPanel();
     status.textContent = 'could not export schematic';
     console.error(err);
   }
-});
-
-// Import circuit file into CircuitJS
-document.getElementById('import-circuit').addEventListener('change', async (e) => {
-  const status = document.getElementById('bridge-status');
-  const file = e.target.files[0];
-  if (!file) return;
-
-  try {
-    const text = await file.text();
-    if (!cjSim) hookCircuitJS();
-
-    let attempts = 0;
-    const tryLoad = () => {
-      if (cjSim && typeof cjSim.importCircuit === 'function') {
-        cjSim.importCircuit(text);
-        status.textContent = `loaded ${file.name}`;
-        setTimeout(() => { status.textContent = ''; }, 3000);
-      } else if (attempts < 20) {
-        attempts++;
-        setTimeout(tryLoad, 200);
-      } else {
-        status.textContent = 'simulator not ready \u2014 try again';
-      }
-    };
-    tryLoad();
-  } catch (err) {
-    status.textContent = 'could not read file';
-    console.error(err);
-  }
-
-  e.target.value = '';
 });
 
 // ---------------------------------------------------------------- sim + dynamic render loop
