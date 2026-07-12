@@ -1191,7 +1191,9 @@ function load() {
   let data = null;
   try { data = JSON.parse(localStorage.getItem(SAVE_KEY)); } catch (_) { /* corrupted */ }
   if (!data) return;
-  document.getElementById('projname').value = data.name || 'untitled circuit';
+  const nameEl = document.getElementById('projname');
+  nameEl.value = data.name || 'untitled circuit';
+  fitProjName(nameEl);
   for (const sp of data.parts || []) {
     const def = DEF_BY_ID.get(sp.def);
     if (!def) continue;
@@ -1260,20 +1262,48 @@ document.getElementById('serial-clear').addEventListener('click', () => {
   });
 })();
 
-// Re-fit every frame while the parts panel slides so the board recenters
-// gradually in sync with the panel (instead of one jump at the end).
-let paletteAnim = 0;
-document.getElementById('menu-toggle').addEventListener('click', () => {
-  document.getElementById('app').classList.toggle('palette-hidden');
-  cancelAnimationFrame(paletteAnim);
+// Re-fit every frame while side panels animate so the board scales with the
+// stage instead of jumping once at the end of the CSS transition.
+let layoutAnim = 0;
+function fitDuring(ms = 360) {
+  cancelAnimationFrame(layoutAnim);
   const start = performance.now();
   const step = (now) => {
-    fitView();                                  // stage width animates with the panel
-    if (now - start < 360) paletteAnim = requestAnimationFrame(step);
+    fitView();
+    if (now - start < ms) layoutAnim = requestAnimationFrame(step);
+    else fitView();
   };
-  paletteAnim = requestAnimationFrame(step);
+  layoutAnim = requestAnimationFrame(step);
+}
+document.getElementById('menu-toggle').addEventListener('click', () => {
+  document.getElementById('app').classList.toggle('palette-hidden');
+  fitDuring(360);
 });
-document.getElementById('projname').addEventListener('change', saveSoon);
+(() => {
+  const el = document.getElementById('projname');
+  const fit = () => fitProjName(el);
+  el.addEventListener('input', () => { fit(); saveSoon(); });
+  el.addEventListener('change', saveSoon);
+  // Fonts may load after first paint — remeasure once ready
+  if (document.fonts?.ready) document.fonts.ready.then(fit);
+  fit();
+})();
+
+function fitProjName(el = document.getElementById('projname')) {
+  if (!el) return;
+  // Prefer native field-sizing when available; otherwise measure text width.
+  if (typeof CSS !== 'undefined' && CSS.supports?.('field-sizing', 'content')) {
+    el.style.width = '';
+    return;
+  }
+  const cs = getComputedStyle(el);
+  const canvas = fitProjName._c || (fitProjName._c = document.createElement('canvas'));
+  const ctx = canvas.getContext('2d');
+  ctx.font = `${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
+  const textW = ctx.measureText(el.value || ' ').width;
+  const pad = parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight);
+  el.style.width = Math.ceil(textW + pad + 2) + 'px';
+}
 
 // ---------------------------------------------------------------- CircuitJS bridge
 // CircuitJS is now self-hosted (same origin), so we can read the drawn circuit
@@ -1295,17 +1325,16 @@ hookCircuitJS();
 document.getElementById('btn-schematic').addEventListener('click', () => {
   schEl.classList.toggle('open');
   appEl.classList.toggle('schematic-open');
-  // Refit after the flex width transition settles
-  setTimeout(() => fitView(), 340);
+  fitDuring(360);
 });
 document.getElementById('sch-close').addEventListener('click', () => {
   schEl.classList.remove('open');
   appEl.classList.remove('schematic-open');
-  setTimeout(() => fitView(), 340);
+  fitDuring(360);
 });
 schEl.addEventListener('transitionend', (e) => {
   if (e.target !== schEl) return;
-  if (e.propertyName === 'max-width' || e.propertyName === 'flex-basis' || e.propertyName === 'opacity') {
+  if (e.propertyName === 'margin-right' || e.propertyName === 'opacity') {
     fitView();
   }
 });
@@ -1333,23 +1362,33 @@ document.getElementById('build-sch').addEventListener('click', () => {
   const status = document.getElementById('bridge-status');
   if (!cjSim) hookCircuitJS();
   if (!cjSim || typeof cjSim.importCircuit !== 'function') {
+    if (!schEl.classList.contains('open')) {
+      schEl.classList.add('open');
+      appEl.classList.add('schematic-open');
+      fitDuring(360);
+    }
     status.textContent = 'simulator still loading \u2014 try again in a moment';
     return;
   }
   try {
     const { text, message } = exportBreadboardToText(state);
+    if (!schEl.classList.contains('open')) {
+      schEl.classList.add('open');
+      appEl.classList.add('schematic-open');
+      fitDuring(360);
+    }
     if (!text) {
       status.textContent = message;
       return;
     }
     cjSim.importCircuit(text);
+    status.textContent = message;
+  } catch (err) {
     if (!schEl.classList.contains('open')) {
       schEl.classList.add('open');
       appEl.classList.add('schematic-open');
-      setTimeout(() => fitView(), 350);
+      fitDuring(360);
     }
-    status.textContent = message;
-  } catch (err) {
     status.textContent = 'could not export schematic';
     console.error(err);
   }

@@ -13,7 +13,6 @@
 
   <header id="topbar">
     <div class="tb-left">
-      <a href="https://www.justinzwu.com/" id="back" target="_blank" rel="noopener noreferrer">← justinzwu.com</a>
       <input id="projname" value="untitled circuit" spellcheck="false" />
     </div>
     <div class="tb-right"></div>
@@ -149,6 +148,7 @@
       <div id="canvas-tools">
         <button id="btn-schematic" title="open CircuitJS schematic">circuit</button>
         <button id="btn-clear" title="reset the board" aria-label="reset the board">reset</button>
+        <button type="button" id="build-sch" title="Build a schematic from this breadboard">build</button>
       </div>
       <div id="zoom-controls">
         <button id="zoom-out" title="zoom out" aria-label="zoom out">&#8722;</button>
@@ -160,21 +160,24 @@
     </div>
 
     <aside id="schematic">
-      <div class="sch-head">
-        <span class="sch-title">schematic</span>
-        <div class="sch-head-actions">
-          <label class="import-file-btn" title="Import a Falstad / CircuitJS .txt file">
+      <div class="sch-toolbar" role="toolbar" aria-label="Circuit simulator">
+        <div class="sch-tools">
+          <label class="sch-tool" title="Load a Falstad / CircuitJS .txt file">
             <input type="file" id="import-circuit" accept=".txt,.circuitjs" hidden />
-            import
+            Import
           </label>
-          <button id="build-bb" title="Place the schematic onto the breadboard">build board →</button>
-          <button id="build-sch" title="Export the breadboard as a schematic">→ schematic</button>
-          <span id="bridge-status"></span>
+          <button type="button" class="sch-tool" id="build-bb" title="Place this schematic onto the breadboard">
+            build
+          </button>
         </div>
-        <button id="sch-close" aria-label="close">✕</button>
+        <button type="button" id="sch-close" class="sch-close" title="Close simulator" aria-label="Close simulator">×</button>
       </div>
-      <iframe id="sch-frame" src="circuitjs/circuitjs.html?startCircuit=blank.txt" title="CircuitJS"></iframe>
-      <p class="sch-tip">Draw in Falstad above, then <b>build board</b> — or wire the breadboard and click <b>→ schematic</b>.</p>
+      <div class="sch-stage">
+        <iframe id="sch-frame" src="circuitjs/circuitjs.html?startCircuit=blank.txt" title="Falstad Circuit Simulator"></iframe>
+      </div>
+      <div class="sch-footer" aria-live="polite">
+        <span id="bridge-status"></span>
+      </div>
     </aside>
   </div>
 
