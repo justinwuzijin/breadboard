@@ -1221,49 +1221,80 @@ async function inlineSvgImages(root) {
     } catch (_) { /* leave external href */ }
   }));
 }
+function measureSvgContentBBox(root) {
+  const host = document.createElement('div');
+  host.style.cssText = 'position:fixed;left:-10000px;top:0;overflow:hidden;pointer-events:none;visibility:hidden';
+  document.body.appendChild(host);
+  const mount = root.cloneNode(true);
+  mount.removeAttribute('width');
+  mount.removeAttribute('height');
+  host.appendChild(mount);
+  try {
+    const target = mount.querySelector('#world') || mount.querySelector('g') || mount;
+    const bb = target.getBBox();
+    if (bb.width > 0 && bb.height > 0) return bb;
+  } catch (_) { /* fall back to declared viewBox */ }
+  finally {
+    host.remove();
+  }
+  return null;
+}
 function svgStringToPngBlob(svgText, opts = {}) {
   const pad = opts.pad ?? 48;
   const bg = opts.bg ?? '#f6f5f2';
   const scale = opts.scale ?? 2;
+  const measure = opts.measure !== false;
   return new Promise(async (resolve, reject) => {
     try {
       const doc = new DOMParser().parseFromString(svgText, 'image/svg+xml');
       const root = doc.documentElement;
       if (root.querySelector('parsererror')) throw new Error('invalid svg');
 
-      let vb = root.getAttribute('viewBox');
+      await inlineSvgImages(root);
+
       let minX, minY, vbW, vbH;
-      if (vb) {
-        const p = vb.trim().split(/[\s,]+/).map(Number);
-        [minX, minY, vbW, vbH] = p;
+      const measured = measure ? measureSvgContentBBox(root) : null;
+      if (measured) {
+        minX = measured.x - pad;
+        minY = measured.y - pad;
+        vbW = measured.width + pad * 2;
+        vbH = measured.height + pad * 2;
       } else {
-        vbW = parseFloat(root.getAttribute('width')) || 800;
-        vbH = parseFloat(root.getAttribute('height')) || 600;
-        minX = 0; minY = 0;
+        const vb = root.getAttribute('viewBox');
+        if (vb) {
+          const p = vb.trim().split(/[\s,]+/).map(Number);
+          [minX, minY, vbW, vbH] = p;
+        } else {
+          vbW = parseFloat(root.getAttribute('width')) || 800;
+          vbH = parseFloat(root.getAttribute('height')) || 600;
+          minX = 0; minY = 0;
+        }
+        minX -= pad;
+        minY -= pad;
+        vbW += pad * 2;
+        vbH += pad * 2;
       }
-      const outW = vbW + pad * 2;
-      const outH = vbH + pad * 2;
-      root.setAttribute('viewBox', `${minX - pad} ${minY - pad} ${outW} ${outH}`);
-      root.setAttribute('width', String(Math.round(outW * scale)));
-      root.setAttribute('height', String(Math.round(outH * scale)));
+
+      root.setAttribute('viewBox', `${minX} ${minY} ${vbW} ${vbH}`);
+      root.setAttribute('width', String(Math.round(vbW * scale)));
+      root.setAttribute('height', String(Math.round(vbH * scale)));
 
       const bgRect = doc.createElementNS('http://www.w3.org/2000/svg', 'rect');
-      bgRect.setAttribute('x', String(minX - pad));
-      bgRect.setAttribute('y', String(minY - pad));
-      bgRect.setAttribute('width', String(outW));
-      bgRect.setAttribute('height', String(outH));
+      bgRect.setAttribute('x', String(minX));
+      bgRect.setAttribute('y', String(minY));
+      bgRect.setAttribute('width', String(vbW));
+      bgRect.setAttribute('height', String(vbH));
       bgRect.setAttribute('fill', bg);
       root.insertBefore(bgRect, root.firstChild);
 
-      await inlineSvgImages(root);
       const xml = new XMLSerializer().serializeToString(root);
       const url = URL.createObjectURL(new Blob([xml], { type: 'image/svg+xml;charset=utf-8' }));
       const img = new Image();
       img.onload = () => {
         try {
           const canvas = document.createElement('canvas');
-          canvas.width = Math.round(outW * scale);
-          canvas.height = Math.round(outH * scale);
+          canvas.width = Math.round(vbW * scale);
+          canvas.height = Math.round(vbH * scale);
           const ctx = canvas.getContext('2d');
           ctx.fillStyle = bg;
           ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -1283,17 +1314,16 @@ function svgStringToPngBlob(svgText, opts = {}) {
   });
 }
 async function exportBreadboardPng() {
-  const b = contentBounds();
   const clone = svg.cloneNode(true);
-  // Drop transient UI chrome from the export
+  // Export in world space — drop the live pan/zoom transform and UI chrome
+  clone.querySelector('#world')?.removeAttribute('transform');
+  clone.querySelector('#fxL')?.replaceChildren();
   clone.querySelector('#selbox')?.remove();
   clone.querySelector('#hint')?.remove();
-  const pad = 48;
-  clone.setAttribute('viewBox', `${b.minX - pad} ${b.minY - pad} ${b.w + pad * 2} ${b.h + pad * 2}`);
   clone.removeAttribute('width');
   clone.removeAttribute('height');
   const xml = new XMLSerializer().serializeToString(clone);
-  return svgStringToPngBlob(xml, { pad: 0, bg: '#f6f5f2', scale: 2 });
+  return svgStringToPngBlob(xml, { pad: 48, bg: '#f6f5f2', scale: 2, measure: true });
 }
 function exportCircuitPng() {
   return new Promise((resolve, reject) => {
@@ -1312,7 +1342,7 @@ function exportCircuitPng() {
       cjSim.onsvgrendered = prev;
       try {
         if (!svgStr) throw new Error('empty circuit');
-        const blob = await svgStringToPngBlob(svgStr, { pad: 48, bg: '#ffffff', scale: 2 });
+        const blob = await svgStringToPngBlob(svgStr, { pad: 48, bg: '#ffffff', scale: 2, measure: true });
         resolve(blob);
       } catch (err) {
         reject(err);
@@ -1451,12 +1481,26 @@ function fitProjName(el = document.getElementById('projname')) {
 const schEl = document.getElementById('schematic');
 const schFrame = document.getElementById('sch-frame');
 let cjSim = null;
+function preloadCircuitSvgLib(win) {
+  try {
+    if (!win?.document || win.C2S) return;
+    if (win.document.querySelector('script[data-canvas2svg]')) return;
+    const s = win.document.createElement('script');
+    s.src = 'canvas2svg.js';
+    s.dataset.canvas2svg = '1';
+    win.document.head.appendChild(s);
+  } catch (_) { /* cross-origin or still booting */ }
+}
 function hookCircuitJS() {
   try {
     const win = schFrame.contentWindow;
     if (!win) return;
+    preloadCircuitSvgLib(win);
     if (win.CircuitJS1) cjSim = win.CircuitJS1;            // already booted
-    win.oncircuitjsloaded = () => { cjSim = win.CircuitJS1; };
+    win.oncircuitjsloaded = () => {
+      cjSim = win.CircuitJS1;
+      preloadCircuitSvgLib(win);
+    };
   } catch (_) { /* still loading */ }
 }
 schFrame.addEventListener('load', hookCircuitJS);
