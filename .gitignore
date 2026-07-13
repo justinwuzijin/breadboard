@@ -2,6 +2,7 @@
 *.log
 .vercel
 node_modules/
+dist/
 .idea/
 .vscode/
 *.swp
