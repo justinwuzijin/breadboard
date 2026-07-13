@@ -160,10 +160,10 @@ body {
   height: auto;
   border: none;
   border-radius: 0 0 14px 14px;
-  background: #f97316;
+  background: #fff;
   display: flex;
   flex-direction: column;
-  box-shadow: 0 4px 18px rgba(249, 115, 22, 0.22);
+  box-shadow: 0 4px 18px rgba(15, 15, 15, 0.08);
 }
 #grid {
   flex: 0 0 auto;
@@ -219,7 +219,7 @@ body {
   letter-spacing: 0;
   line-height: 1.2;
   text-align: center;
-  color: #fff;
+  color: #26262a;
   background: transparent;
   border-radius: 0;
   padding: 2px 0;
