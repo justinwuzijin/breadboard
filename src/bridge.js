@@ -320,13 +320,14 @@ export function buildBreadboard(circuit, api) {
     return `can't build — schematic has ${dffCount} flip-flops (looks like two circuits in one file). Import one circuit: circuits/lab4-counter.txt or circuits/lab4-traffic.txt.`;
   }
 
-  // 14-pin DIPs span 7 columns (pitch 7). Pushbuttons straddle the ravine (e/f)
-  // in a left reserve so they never share a column with an IC.
-  const IC_PITCH = 7;
+  // 14-pin DIPs span 7 columns; leave 1 empty column between chips so they
+  // never sit flush (physically impossible on a real board).
+  const IC_WIDTH = 7;
+  const IC_PITCH = IC_WIDTH + 1; // +1 gap
   const SWITCH_COLS = 8; // cols 1..7 for switches; ICs start at 8
   const icStart = SWITCH_COLS;
   const icColsNeeded = chipInstances.length
-    ? icStart + (chipInstances.length - 1) * IC_PITCH + 6
+    ? icStart + (chipInstances.length - 1) * IC_PITCH + (IC_WIDTH - 1)
     : 0;
   if (icColsNeeded > COLS) {
     return `can't build — ${chipInstances.length} ICs need columns through ${icColsNeeded}, board has ${COLS}. Import one circuit at a time (Lab 4 has two — use circuits/lab4-counter.txt or circuits/lab4-traffic.txt).`;
@@ -442,7 +443,7 @@ export function buildBreadboard(circuit, api) {
   const icPower = [];
   let icCol = icStart;
   for (const chip of chipInstances) {
-    if (icCol + 6 > COLS) {
+    if (icCol + IC_WIDTH - 1 > COLS) {
       return `can't build — ran out of board columns placing ${chip.icDef.id}. Split the schematic into one circuit.`;
     }
     const holes = dip14Holes(icCol);
@@ -455,7 +456,7 @@ export function buildBreadboard(circuit, api) {
     // VCC = pin14 @ col e, GND = pin7 @ col+6 f — tap other rows in those columns
     icPower.push(
       { type: 'vcc', col: icCol, top: true },
-      { type: 'gnd', col: icCol + 6, top: false },
+      { type: 'gnd', col: icCol + IC_WIDTH - 1, top: false },
     );
     icCol += IC_PITCH;
   }
@@ -535,33 +536,47 @@ export function buildBreadboard(circuit, api) {
   }
 
   // 3) LED + series resistor in free columns (never share a column with an IC pin)
+  // Layout per LED (exclusive columns, no shared holes between chains):
+  //   c0     c0+3      c0+4  c0+5     then ≥1 gap before next LED
+  //   R──────R         LED+  LED-→GND
+  // Drive ties into c0; resistor end and LED share column c0+3 (series net).
   const icColSet = new Set();
   for (const p of icPlacements) {
-    for (let k = 0; k < 7; k++) icColSet.add(p.col + k);
+    for (let k = 0; k < IC_WIDTH; k++) icColSet.add(p.col + k);
   }
-  const icRight = icPlacements.reduce((m, p) => Math.max(m, p.col + 6), swCursor);
+  const icRight = icPlacements.reduce((m, p) => Math.max(m, p.col + IC_WIDTH - 1), swCursor);
+  const ledUsedCols = new Set();
+  const LED_SPAN = 5;   // columns c0 .. c0+4 occupied by one R+LED chain
+  const LED_STRIDE = 6; // +1 empty column between chains
+
   const findLedSlot = () => {
-    // resistor pins span 3 cols; LED uses adjacent pair on the far end → need c0..c0+4
     const tryCol = (c) => {
-      if (c < 1 || c + 4 > COLS) return null;
-      for (let k = 0; k <= 4; k++) {
-        if (icColSet.has(c + k)) return null;
+      if (c < 1 || c + LED_SPAN - 1 > COLS) return null;
+      for (let k = 0; k < LED_SPAN; k++) {
+        if (icColSet.has(c + k) || ledUsedCols.has(c + k)) return null;
       }
+      // Resistor on b: c0 ↔ c0+3; LED on a: c0+3 ↔ c0+4 (series at column c0+3).
       const holes = [`${c}b`, `${c + 3}b`, `${c + 3}a`, `${c + 4}a`];
       if (holes.some((h) => occupied.has(h) || !HOLE_BY_ID.has(h))) return null;
       return c;
     };
     // Prefer just past the rightmost IC (short jumpers), then scan right, then left
-    for (let c = icRight + 1; c <= COLS - 4; c++) {
+    for (let c = icRight + 2; c <= COLS - (LED_SPAN - 1); c++) {
       const hit = tryCol(c);
       if (hit != null) return hit;
     }
-    for (let c = COLS - 4; c >= 1; c--) {
+    for (let c = COLS - (LED_SPAN - 1); c >= 1; c--) {
       const hit = tryCol(c);
       if (hit != null) return hit;
     }
     return null;
   };
+
+  // Only light LEDs that are actually driven by a placed gate output (lab4 a0/a1/a2).
+  const gateOutNets = new Set();
+  for (const gate of gates) {
+    if (gate.output) gateOutNets.add(find(gate.output));
+  }
 
   /** Drive net for an LED / logic-output: the side that is NOT ground. */
   const ledDriveNet = (e) => {
@@ -590,6 +605,8 @@ export function buildBreadboard(circuit, api) {
     if (e.type !== 'led' && e.type !== 'lout') continue;
     const signalNet = ledDriveNet(e);
     if (isGroundR(signalNet)) continue; // nowhere to drive from
+    // Skip indicators that aren't tied to a gate we placed on the board
+    if (!gateOutNets.has(signalNet)) continue;
     const c0 = findLedSlot();
     if (c0 == null) continue;
     const ohms = e.type === 'lout' ? 330 : (elems.find((x) => {
@@ -602,17 +619,24 @@ export function buildBreadboard(circuit, api) {
     const series = nearestResistorDef(ohms);
     const rHoles = [`${c0}b`, `${c0 + 3}b`];
     const lHoles = [`${c0 + 3}a`, `${c0 + 4}a`];
+    // Final occupancy check — never put two part pins in one hole
+    if ([...rHoles, ...lHoles].some((h) => occupied.has(h))) continue;
     api.addPart(series, { holes: rHoles, rot: 0, props: { ohms: series.props?.ohms || ohms } });
     api.addPart(DEF_BY_ID.get('led'), { holes: lHoles, rot: 0 });
     markHoles([...rHoles, ...lHoles]);
+    for (let k = 0; k < LED_STRIDE; k++) {
+      if (c0 + k <= COLS) ledUsedCols.add(c0 + k);
+    }
     // Signal feeds the resistor's free end (column c0); cathode column → GND.
     // Wire IC output pin → resistor column directly so LEDs always light.
     const tap = allocTap(c0, true);
     const src = netPinHole.get(signalNet);
     if (src && tap) {
       signalWires.push({ a: src, b: tap });
+    } else if (src) {
+      // Tap failed — still register net home for a jumper
+      registerNet(signalNet, c0, true);
     } else {
-      // No IC pin known yet — fall back to deferred jumper between net homes
       registerNet(signalNet, c0, true);
     }
     powerMinus.set(`${c0 + 4}:1`, { col: c0 + 4, top: true });
