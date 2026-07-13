@@ -12,17 +12,18 @@
 </head>
 <body>
 
-  <div id="app">
-    <button id="menu-toggle" title="hide/show parts" aria-label="toggle parts panel">
-      <svg class="tab-chevron" viewBox="0 0 8 12" width="8" height="12" aria-hidden="true">
-        <path d="M5.8 1.5 2.2 6 5.8 10.5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" />
-      </svg>
-    </button>
-    <aside id="palette">
-      <div id="grid"></div>
-    </aside>
-
+  <div id="app" class="palette-hidden">
     <div id="stage">
+      <div id="palette-dock">
+        <aside id="palette">
+          <div id="grid"></div>
+        </aside>
+        <button id="menu-toggle" title="hide/show parts" aria-label="toggle parts panel">
+          <svg class="tab-chevron" viewBox="0 0 8 12" width="8" height="12" aria-hidden="true">
+            <path d="M5.8 1.5 2.2 6 5.8 10.5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+        </button>
+      </div>
       <header id="topbar">
         <div class="tb-left">
           <input id="projname" value="untitled circuit" spellcheck="false" />

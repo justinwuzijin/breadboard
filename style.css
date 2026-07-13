@@ -22,7 +22,13 @@ body {
 }
 
 /* ---- layout ------------------------------------------------------------- */
-#app { flex: 1; display: flex; min-height: 0; overflow: hidden; position: relative; }
+#app {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+  overflow: hidden;
+  position: relative;
+}
 
 /* ---- stage top bar (moves with the canvas column) ----------------------- */
 #topbar {
@@ -56,8 +62,7 @@ body {
 #projname:focus { outline: none; background: rgba(0, 0, 0, 0.04); }
 .tb-right { display: flex; align-items: center; justify-content: flex-end; gap: 14px; min-width: 0; }
 
-/* ---- side flap toggles (flush with their panels) ------------------------ */
-#menu-toggle,
+/* ---- side / edge flap toggles ------------------------------------------- */
 #circuit-toggle {
   position: absolute;
   top: 50%;
@@ -72,7 +77,6 @@ body {
   border: none;
   transform: translateY(-50%);
   transition: background 0.15s, box-shadow 0.2s ease,
-    left 0.34s cubic-bezier(0.32, 0.72, 0, 1),
     right 0.34s cubic-bezier(0.32, 0.72, 0, 1);
 }
 .tab-chevron {
@@ -80,26 +84,36 @@ body {
   transition: transform 0.22s ease;
 }
 
-/* parts — orange, continuous with palette (no seam line) */
+/* parts tab — hangs under the top palette strip */
 #menu-toggle {
-  left: clamp(148px, 11.5vw, 168px);
-  border-radius: 0 8px 8px 0;
+  position: relative;
+  z-index: 1;
+  width: 36px;
+  height: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  cursor: pointer;
+  border: none;
+  border-radius: 0 0 8px 8px;
   color: #fff;
   background: #f97316;
-  box-shadow: 2px 0 8px rgba(249, 115, 22, 0.35);
+  box-shadow: 0 2px 8px rgba(249, 115, 22, 0.35);
+  transition: background 0.15s, box-shadow 0.2s ease, transform 0.12s;
 }
 #menu-toggle:hover {
   color: #fff;
   background: #ea580c;
-  box-shadow: 2px 0 10px rgba(234, 88, 12, 0.42);
+  box-shadow: 0 2px 10px rgba(234, 88, 12, 0.42);
 }
 #menu-toggle:active {
-  transform: translateY(-50%) scale(0.96);
+  transform: scale(0.96);
   background: #c2410c;
 }
-#menu-toggle .tab-chevron { transform: none; }
-#app.palette-hidden #menu-toggle { left: 0; }
-#app.palette-hidden #menu-toggle .tab-chevron { transform: rotate(180deg); }
+/* chevron points up when open (hide), down when closed (show) */
+#menu-toggle .tab-chevron { transform: rotate(90deg); }
+#app.palette-hidden #menu-toggle .tab-chevron { transform: rotate(-90deg); }
 
 /* circuit — black, continuous with simulator (no seam line) */
 #circuit-toggle {
@@ -124,31 +138,42 @@ body {
 }
 #app.schematic-open #circuit-toggle .tab-chevron { transform: rotate(180deg); }
 
-/* ---- palette ------------------------------------------------------------ */
+/* ---- palette (top of stage overlay — tracks breadboard column width) ---- */
+#palette-dock {
+  position: absolute;
+  left: 50%;
+  top: 0;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  transform: translateX(-50%);
+  transition: transform 0.34s cubic-bezier(0.32, 0.72, 0, 1);
+  pointer-events: none;
+}
+#palette-dock > * { pointer-events: auto; }
+/* Slide the strip up; leave the tab peeking at the top edge */
+#app.palette-hidden #palette-dock {
+  transform: translateX(-50%) translateY(calc(-100% + 16px));
+}
 #palette {
-  flex: 0 0 clamp(148px, 11.5vw, 168px);
-  border-right: none;
+  height: auto;
+  border: none;
+  border-radius: 0 0 14px 14px;
   background: #f97316;
   display: flex;
   flex-direction: column;
-  min-height: 0;
-  transition: margin-left 0.34s cubic-bezier(0.32, 0.72, 0, 1);
-}
-/* Slide the parts panel off to the left (stays visible while moving) */
-#app.palette-hidden #palette {
-  margin-left: calc(-1 * clamp(148px, 11.5vw, 168px));
-  pointer-events: none;
+  box-shadow: 0 4px 18px rgba(249, 115, 22, 0.22);
 }
 #grid {
-  flex: 1;
-  overflow: hidden;
+  flex: 0 0 auto;
+  overflow: visible;
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 64px));
-  gap: 8px 10px;
+  grid-template-columns: repeat(6, minmax(0, 56px));
+  gap: 6px 12px;
   justify-content: center;
-  /* Sit under the stage topbar, a bit higher than before */
-  padding: 40px 8px 24px;
-  align-content: start;
+  padding: 12px 16px 28px;
+  align-content: center;
 }
 
 .cell {
@@ -186,19 +211,20 @@ body {
 .cell .tip {
   position: absolute;
   left: 50%;
+  top: auto;
   bottom: 0;
-  transform: translate(-50%, 70%);   /* hang the tag below the item */
+  transform: translate(-50%, 115%);
   font-size: 0.58rem;
   font-weight: 400;
   letter-spacing: 0;
   line-height: 1.2;
   text-align: center;
-  color: rgba(255, 255, 255, 0.85);
+  color: #fff;
   background: transparent;
   border-radius: 0;
   padding: 2px 0;
   width: max-content;
-  max-width: 96%;
+  max-width: 120%;
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.15s;
@@ -464,11 +490,12 @@ body {
 #canvas.wiring { cursor: crosshair; }
 #canvas.panning { cursor: grabbing; }
 
-/* ---- wire color picker (centered) --------------------------------------- */
+/* ---- wire color picker (fixed under the board area) --------------------- */
 #wirebar {
   position: absolute;
-  top: 12px;
   left: 50%;
+  top: auto;
+  bottom: 80px;
   transform: translateX(-50%);
   z-index: 12;
   display: flex;
@@ -665,32 +692,7 @@ body {
 }
 
 /* wirebar centered on stage */
-#app.schematic-open #wirebar {
-  top: 12px;
-  left: 50%;
-  transform: translateX(-50%);
-  max-width: calc(100% - 48px);
-  height: 28px;
-  display: flex;
-  align-items: center;
-}
-#app.schematic-open .wb-swatches {
-  transform: none;
-  flex-wrap: nowrap;
-  padding: 5px 10px;
-  gap: 7px;
-}
-#app.schematic-open .wb-sw {
-  width: 15px;
-  height: 15px;
-}
-#app.schematic-open .wb-custom {
-  width: 16px;
-  height: 16px;
-}
-#app.schematic-open .wb-plus {
-  font-size: 15px;
-}
+/* wirebar size stays constant whether or not the schematic is open */
 #app.schematic-open #credits {
   left: 50%;
   right: auto;

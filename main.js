@@ -110,11 +110,11 @@ function fitView() {
   }
 
   const b = contentBounds();
-  // Reserve chrome so the board centers in the clear canvas under the wirebar
+  // Reserve chrome so the board centers with room for the fixed wirebar underneath
   const padL = 48;
   const padR = 48;
-  const padT = 52;
-  const padB = 48;
+  const padT = 28;
+  const padB = 72;
   const availW = Math.max(80, vw - padL - padR);
   const availH = Math.max(80, vh - padT - padB);
 
@@ -1453,10 +1453,32 @@ function fitDuring(ms = 360) {
   };
   layoutAnim = requestAnimationFrame(step);
 }
-document.getElementById('menu-toggle').addEventListener('click', () => {
-  document.getElementById('app').classList.toggle('palette-hidden');
-  fitDuring(360);
-});
+(() => {
+  const app = document.getElementById('app');
+  const toggle = document.getElementById('menu-toggle');
+  let autoCloseTimer = 0;
+
+  const clearAutoClose = () => {
+    if (autoCloseTimer) {
+      clearTimeout(autoCloseTimer);
+      autoCloseTimer = 0;
+    }
+  };
+
+  toggle.addEventListener('click', () => {
+    clearAutoClose();
+    app.classList.toggle('palette-hidden');
+  });
+
+  // Intro: stay closed 1s, drop open, then tuck away after 1s
+  autoCloseTimer = setTimeout(() => {
+    app.classList.remove('palette-hidden');
+    autoCloseTimer = setTimeout(() => {
+      autoCloseTimer = 0;
+      app.classList.add('palette-hidden');
+    }, 1000);
+  }, 1000);
+})();
 (() => {
   const el = document.getElementById('projname');
   const DEFAULT_NAME = 'untitled circuit';
