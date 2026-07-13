@@ -17,6 +17,59 @@ const inspector = document.getElementById('inspector');
 const zoomPct = document.getElementById('zoom-pct');
 const appEl = document.getElementById('app');
 
+// ---------------------------------------------------------------- UI click sound
+const clickSnd = new Audio('audio/click.wav');
+clickSnd.preload = 'auto';
+const clickBound = new WeakSet();
+function playClick() {
+  try {
+    const s = clickSnd.cloneNode();
+    void s.play();
+  } catch (_) { /* autoplay / missing file */ }
+}
+function shouldPlayClickSound(e) {
+  const el = e.target;
+  if (!(el instanceof Element)) return false;
+
+  // CircuitJS iframe — keep UI / schematic clicks
+  if (el.ownerDocument !== document) return true;
+
+  // Chrome / controls outside the canvas
+  if (el.closest([
+    'button', 'a', 'input', 'select', 'textarea', 'label',
+    '.cell', '.wb-sw', '.wb-custom', '#inspector', '#zoom-controls',
+    '#menu-toggle', '#circuit-toggle', '#palette-dock', '#credits',
+    '[role="menuitem"]', '[role="button"]',
+  ].join(', '))) return true;
+
+  // Canvas: play for parts / wires / ports / holes — not empty-space pan
+  if (el.closest('#canvas') || el === svg) {
+    try {
+      const w = toWorld(e);
+      if (pendingWire) return true;
+      if (portAt(w.x, w.y)) return true;
+      let g = el;
+      while (g && g !== svg && !(g.classList && g.classList.contains('part'))) g = g.parentNode;
+      if (g && g !== svg) return true;
+      if (el.closest('.wire')) return true;
+      if (nearestHole(w.x, w.y, P * 0.55)) return true;
+    } catch (_) { /* helpers not ready */ }
+    return false;
+  }
+
+  return false;
+}
+function bindClickSound(root) {
+  if (!root || clickBound.has(root)) return;
+  clickBound.add(root);
+  root.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return;
+    if (!shouldPlayClickSound(e)) return;
+    playClick();
+  }, true);
+}
+bindClickSound(document);
+
 // ---------------------------------------------------------------- state
 const state = { parts: [], wires: [], uid: 1 };
 let view = { x: 60, y: 60, k: 1 };
@@ -812,6 +865,7 @@ const wbCustom = wbColorInput.closest('.wb-custom');
 const MAG_MAX = 1.45;    // peak scale directly under the cursor
 const MAG_RADIUS = 66;   // px of horizontal influence around the cursor
 let magPointerX = null;  // last cursor x while hovering the bar (null = away)
+let magPointerY = null;
 
 function magItems() {
   return [...wbSwatches.querySelectorAll('.wb-sw, .wb-custom')];
@@ -821,7 +875,21 @@ function baseScaleOf(el) {
   return el === wbCustom ? 1.35 : 1.42;
 }
 function updateMagnify() {
-  for (const el of magItems()) {
+  const items = magItems();
+  let hot = null;
+  if (magPointerX != null && magPointerY != null) {
+    // Outline only when the cursor is actually over a swatch — not in the gaps
+    // (including dead-center between two colors).
+    for (const el of items) {
+      const r = el.getBoundingClientRect();
+      if (magPointerX >= r.left && magPointerX <= r.right
+          && magPointerY >= r.top && magPointerY <= r.bottom) {
+        hot = el;
+        break;
+      }
+    }
+  }
+  for (const el of items) {
     const base = baseScaleOf(el);          // selected rests bigger, always centered
     let mag = 1;
     if (magPointerX != null) {             // proximity swell is a hover-only effect
@@ -834,6 +902,7 @@ function updateMagnify() {
     // Always grow from the center so nothing pops up out of the bar.
     el.style.transformOrigin = 'center center';
     el.style.transform = `scale(${Math.max(base, mag)})`;
+    el.classList.toggle('wb-hot', el === hot);
   }
 }
 
@@ -863,8 +932,16 @@ function buildWireBar() {
     wbSwatches.insertBefore(sw, wbCustom);
   }
   wbColorInput.addEventListener('input', () => applyWireColor(wbColorInput.value, true));
-  wirebar.addEventListener('pointermove', (e) => { magPointerX = e.clientX; updateMagnify(); });
-  wirebar.addEventListener('pointerleave', () => { magPointerX = null; updateMagnify(); });
+  wirebar.addEventListener('pointermove', (e) => {
+    magPointerX = e.clientX;
+    magPointerY = e.clientY;
+    updateMagnify();
+  });
+  wirebar.addEventListener('pointerleave', () => {
+    magPointerX = null;
+    magPointerY = null;
+    updateMagnify();
+  });
   applyWireColor(currentWireColor, false);
 }
 
@@ -1534,10 +1611,12 @@ function hookCircuitJS() {
     const win = schFrame.contentWindow;
     if (!win) return;
     preloadCircuitSvgLib(win);
+    bindClickSound(schFrame.contentDocument);
     if (win.CircuitJS1) cjSim = win.CircuitJS1;            // already booted
     win.oncircuitjsloaded = () => {
       cjSim = win.CircuitJS1;
       preloadCircuitSvgLib(win);
+      bindClickSound(schFrame.contentDocument);
     };
   } catch (_) { /* still loading */ }
 }

@@ -55273,9 +55273,7 @@ function $init_3(this$static){
   $putStringValue(xmlDumpTypeMap, 'Scope', 'ScopeElm');
   $setEnabled_1(this$static.menus.recoverItem, this$static.app.recovery != null);
   width_0 = $getOffsetWidth(get_0());
-  VERTICALPANELWIDTH = width_0 / 5 | 0;
-  VERTICALPANELWIDTH > 166 && (VERTICALPANELWIDTH = 166);
-  VERTICALPANELWIDTH < 128 && (VERTICALPANELWIDTH = 128);
+  VERTICALPANELWIDTH = 0;
   this$static.verticalPanel = new VerticalPanel;
   $addClassName($getElement(this$static.verticalPanel), 'verticalPanel');
   $getElement(this$static.verticalPanel).id = 'painel';

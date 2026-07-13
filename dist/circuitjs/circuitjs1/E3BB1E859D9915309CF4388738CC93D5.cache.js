@@ -51151,7 +51151,7 @@ function $drawBottomArea(this$static, g){
     this$static.hideInfoBox && (h = 0);
   }
   this$static.app.stopMessage != null && this$static.app.circuitArea.height > this$static.canvasHeight - 30 && (h = 30);
-  $setColor_1(g, this$static.menus.printableCheckItem.on?'#eee':'#111');
+  $setColor_1(g, this$static.menus.printableCheckItem.on?'#eee':'#000');
   $fillRect_0(g, leftX, this$static.app.circuitArea.height - h, this$static.app.circuitArea.width_0, this$static.canvasHeight - this$static.app.circuitArea.height + h);
   $setFont_0(g, unitsFont);
   ct = null.$_nullField;
@@ -51334,9 +51334,7 @@ function $init_3(this$static){
   $putStringValue(xmlDumpTypeMap, 'Scope', 'ScopeElm');
   $setEnabled_1(this$static.menus.recoverItem, this$static.app.recovery != null);
   width_0 = $getOffsetWidth(get_0());
-  VERTICALPANELWIDTH = width_0 / 5 | 0;
-  VERTICALPANELWIDTH > 166 && (VERTICALPANELWIDTH = 166);
-  VERTICALPANELWIDTH < 128 && (VERTICALPANELWIDTH = 128);
+  VERTICALPANELWIDTH = 0;
   this$static.verticalPanel = new VerticalPanel;
   $addClassName(this$static.verticalPanel.element, 'verticalPanel');
   this$static.verticalPanel.element.id = 'painel';

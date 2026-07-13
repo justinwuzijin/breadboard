@@ -2,7 +2,7 @@ import { defineConfig } from 'vite';
 import { cpSync, existsSync, mkdirSync, readdirSync } from 'fs';
 import { join } from 'path';
 
-const STATIC_DIRS = ['img', 'circuitjs', 'examples'];
+const STATIC_DIRS = ['img', 'circuitjs', 'examples', 'audio'];
 const STATIC_FILES = [
   'lab4-counter.txt',
   'lab4-traffic.txt',
