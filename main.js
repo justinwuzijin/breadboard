@@ -3,7 +3,7 @@
 import { P, E, BODY, buildBoard, nearestHole, HOLE_BY_ID, baseNetOf } from './board.js';
 import { CATALOG, DEF_BY_ID, WIRE_COLORS, fmtOhm } from './parts.js';
 import { runSim, portNode } from './sim.js';
-import { importFromSim, exportBreadboardToText } from './bridge.js';
+import { importFromSim, exportBreadboardToText, circuitHasBuildableContent } from './bridge.js';
 
 const svg = document.getElementById('canvas');
 const world = document.getElementById('world');
@@ -1522,6 +1522,11 @@ function hookCircuitJS() {
 schFrame.addEventListener('load', hookCircuitJS);
 hookCircuitJS();
 
+document.querySelector('#cx-export .cx-export-btn')?.addEventListener('click', (e) => {
+  e.preventDefault();
+  e.currentTarget.blur();
+});
+
 document.getElementById('export-circuit').addEventListener('click', async () => {
   const status = document.getElementById('bridge-status');
   try {
@@ -1573,30 +1578,25 @@ function openSchematicPanel() {
   }
 }
 
-// Single Build control (canvas): schematic open → place on board; else → export to schematic
-document.getElementById('build-sch').addEventListener('click', () => {
-  const status = document.getElementById('bridge-status');
-  if (!cjSim) hookCircuitJS();
-
-  if (schEl.classList.contains('open')) {
-    if (!cjSim || typeof cjSim.getElements !== 'function') {
-      status.textContent = 'simulator still loading \u2014 try again in a moment';
-      return;
-    }
-    try {
-      status.textContent = importFromSim(cjSim, {
-        addPart,
-        addWire,
-        clearBoard: () => document.getElementById('btn-clear').click(),
-      });
-      fitView();
-    } catch (err) {
-      status.textContent = 'could not read the circuit';
-      console.error(err);
-    }
+function buildFromCircuitToBoard(status) {
+  if (!cjSim || typeof cjSim.getElements !== 'function') {
+    status.textContent = 'simulator still loading \u2014 try again in a moment';
     return;
   }
+  try {
+    status.textContent = importFromSim(cjSim, {
+      addPart,
+      addWire,
+      clearBoard: () => document.getElementById('btn-clear').click(),
+    });
+    fitView();
+  } catch (err) {
+    status.textContent = 'could not read the circuit';
+    console.error(err);
+  }
+}
 
+function buildFromBoardToCircuit(status) {
   if (!cjSim || typeof cjSim.importCircuit !== 'function') {
     openSchematicPanel();
     status.textContent = 'simulator still loading \u2014 try again in a moment';
@@ -1616,6 +1616,36 @@ document.getElementById('build-sch').addEventListener('click', () => {
     status.textContent = 'could not export schematic';
     console.error(err);
   }
+}
+
+// Build: empty board + circuit content → place on board;
+// empty circuit + board content → export to schematic;
+// both populated → prefer circuit→board when schematic is open, else board→circuit.
+document.getElementById('build-sch').addEventListener('click', () => {
+  const status = document.getElementById('bridge-status');
+  if (!cjSim) hookCircuitJS();
+
+  const boardHas = state.parts.length > 0;
+  const circuitHas = circuitHasBuildableContent(cjSim);
+
+  if (!boardHas && !circuitHas) {
+    status.textContent = 'nothing to build \u2014 add parts on the breadboard or circuit';
+    return;
+  }
+
+  if (!boardHas && circuitHas) {
+    buildFromCircuitToBoard(status);
+    return;
+  }
+
+  if (boardHas && !circuitHas) {
+    buildFromBoardToCircuit(status);
+    return;
+  }
+
+  // Both sides have content — keep the previous panel-based preference
+  if (schEl.classList.contains('open')) buildFromCircuitToBoard(status);
+  else buildFromBoardToCircuit(status);
 });
 
 // ---------------------------------------------------------------- sim + dynamic render loop

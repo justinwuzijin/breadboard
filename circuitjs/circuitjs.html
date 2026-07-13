@@ -173,6 +173,8 @@ body > div,
 .gwt-MenuBar-horizontal .gwt-MenuItem {
 	color: #f0f0f0 !important;
 	font-weight: 500 !important;
+	font-size: 10px !important;
+	padding: 2px 5px !important;
 }
 .gwt-MenuBar .gwt-MenuItem-selected,
 .gwt-MenuBar-horizontal .gwt-MenuItem-selected {
@@ -292,31 +294,56 @@ table td {
 }
 .gwt-MenuBar-horizontal .gwt-MenuItem {
 	color: #f0f0f0 !important;
+	font-size: 10px !important;
+	padding: 2px 5px !important;
 }
 .triggerLabel {
 	background: #1e1e1e !important;
 	color: #f0f0f0 !important;
 }
-/* Reset / RUN sit in the menubar */
-.gwt-MenuBar-horizontal {
-	position: relative !important;
+/* Keep the desktop File/Edit menubar even when the panel is narrow
+   (CircuitJS otherwise swaps to a hamburger below 600px). */
+@media only screen and (max-width: 600px) {
+	.trigger,
+	.toptrigger,
+	.triggerLabel,
+	.toptriggerlabel {
+		display: none !important;
+	}
+	.gwt-MenuBar-horizontal > table {
+		display: table !important;
+		position: static !important;
+		width: auto !important;
+		height: auto !important;
+		top: auto !important;
+		left: auto !important;
+		background: transparent !important;
+		text-align: left !important;
+	}
+	.gwt-MenuBar-horizontal > table td {
+		display: table-cell !important;
+	}
+	.gwt-MenuBar-horizontal .gwt-MenuItem {
+		display: table-cell !important;
+	}
 }
+/* Reset / RUN sit in the menubar strip (parent is the north dock slot) */
 .menubar-sim-controls {
 	position: absolute;
-	right: 8px;
+	right: 6px;
 	top: 50%;
 	transform: translateY(-50%);
 	display: flex;
 	align-items: center;
-	gap: 6px;
+	gap: 5px;
 	z-index: 2;
 }
 .menubar-sim-controls .topButton,
 .menubar-sim-controls .gwt-Button {
 	margin: 0 !important;
-	padding: 2px 8px !important;
-	font-size: 11px !important;
-	line-height: 1.25 !important;
+	padding: 1px 6px !important;
+	font-size: 10px !important;
+	line-height: 1.2 !important;
 	height: auto !important;
 	background: #e7e7e7 !important;
 	background-image: none !important;
@@ -328,18 +355,10 @@ table td {
 .menubar-sim-controls .gwt-Button:hover {
 	background: #f3f3f3 !important;
 }
-#painel .buttonPanel-empty {
-	display: none !important;
-}
 /* hide the right control sidebar entirely (sliders / circuit label) */
 #painel,
 .verticalPanel {
 	display: none !important;
-}
-.gwt-DockLayoutPanel > div[style*="right: 0"] {
-	width: 0 !important;
-	min-width: 0 !important;
-	overflow: hidden !important;
 }
 
 </style>
@@ -389,7 +408,7 @@ table td {
         var host = document.createElement('div');
         host.className = 'menubar-sim-controls';
         toMove.forEach(function (b) { host.appendChild(b); });
-        menuBar.appendChild(host);
+        menuBar.parentElement.appendChild(host);
         // Collapse the east dock slot so the canvas uses full width
         var east = panel.parentElement;
         if (east && east !== document.body) {

@@ -683,6 +683,18 @@ export function importFromSim(sim, api) {
   return buildBreadboard(circuit, api);
 }
 
+/** True if the live schematic has parts Build can place on the breadboard. */
+export function circuitHasBuildableContent(sim) {
+  if (!sim || typeof sim.getElements !== 'function') return false;
+  try {
+    const { elems, gates } = readLiveCircuit(sim);
+    const hasPassive = elems.some((e) => ['r', 'led', 's', 'lin', 'lout'].includes(e.type));
+    return hasPassive || gates.length > 0;
+  } catch {
+    return false;
+  }
+}
+
 // ---- breadboard → schematic -------------------------------------------------
 
 const IC_TO_GATE = {

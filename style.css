@@ -82,7 +82,7 @@ body {
 
 /* parts — orange, continuous with palette (no seam line) */
 #menu-toggle {
-  left: clamp(180px, 16.5vw, 250px);
+  left: clamp(148px, 11.5vw, 168px);
   border-radius: 0 8px 8px 0;
   color: #fff;
   background: #f97316;
@@ -103,7 +103,7 @@ body {
 
 /* circuit — black, continuous with simulator (no seam line) */
 #circuit-toggle {
-  --sch-w: clamp(260px, 34vw, 520px);
+  --sch-w: clamp(400px, 32vw, 500px);
   right: 0;
   border-radius: 8px 0 0 8px;
   color: #fff;
@@ -126,7 +126,7 @@ body {
 
 /* ---- palette ------------------------------------------------------------ */
 #palette {
-  flex: 0 0 clamp(180px, 16.5vw, 250px);
+  flex: 0 0 clamp(148px, 11.5vw, 168px);
   border-right: none;
   background: #f97316;
   display: flex;
@@ -136,18 +136,18 @@ body {
 }
 /* Slide the parts panel off to the left (stays visible while moving) */
 #app.palette-hidden #palette {
-  margin-left: calc(-1 * clamp(180px, 16.5vw, 250px));
+  margin-left: calc(-1 * clamp(148px, 11.5vw, 168px));
   pointer-events: none;
 }
 #grid {
   flex: 1;
   overflow: hidden;
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 72px));
-  gap: 10px 14px;
+  grid-template-columns: repeat(2, minmax(0, 64px));
+  gap: 8px 10px;
   justify-content: center;
   /* Sit under the stage topbar, a bit higher than before */
-  padding: 40px 10px 24px;
+  padding: 40px 8px 24px;
   align-content: start;
 }
 
@@ -300,9 +300,7 @@ body {
   box-shadow: none;
   transition: color 0.15s;
 }
-.cx-export:hover .cx-export-btn,
-.cx-export:focus-within .cx-export-btn,
-.cx-export.open .cx-export-btn {
+.cx-export:hover .cx-export-btn {
   color: rgba(0, 0, 0, 0.75);
   background: transparent;
 }
@@ -328,9 +326,7 @@ body {
   z-index: 30;
   pointer-events: none;
 }
-.cx-export:hover .cx-export-menu,
-.cx-export:focus-within .cx-export-menu,
-.cx-export.open .cx-export-menu {
+.cx-export:hover .cx-export-menu {
   opacity: 1;
   visibility: visible;
   transform: translateX(-50%);
@@ -649,7 +645,7 @@ body {
 /* ---- CircuitJS / Falstad panel (split-pane sibling of stage) ------------ */
 /* Same slide pattern as #palette: fixed basis + margin tuck, not max-width. */
 #schematic {
-  --sch-w: clamp(260px, 34vw, 520px);
+  --sch-w: clamp(400px, 32vw, 500px);
   flex: 0 0 var(--sch-w);
   align-self: stretch;
   margin-right: calc(-1 * var(--sch-w));
