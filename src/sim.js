@@ -56,7 +56,7 @@ export function runSim(state, dt, t) {
     else if (st === 'button') {
       uf.uni(pinByName(inst, 'a1'), pinByName(inst, 'a2'));
       uf.uni(pinByName(inst, 'b1'), pinByName(inst, 'b2'));
-      if (rt.pressed) uf.uni(pinByName(inst, 'a1'), pinByName(inst, 'b1'));
+      if (rt.pressed || rt.held) uf.uni(pinByName(inst, 'a1'), pinByName(inst, 'b1'));
     }
   }
 
@@ -257,14 +257,27 @@ export function runSim(state, dt, t) {
           break;
         }
         case 'cd4013': {
+          // Edge-triggered D flip-flop. The solver runs several settle passes
+          // per frame, so mutating the stored state mid-settle would re-clock
+          // the FF on every pass (breaking counters/shift registers). Instead:
+          // drive the CURRENT state while combinational inputs settle, compute
+          // the next state from those settled inputs, and commit once per frame
+          // (below, after the pass loop). Set/reset stay level-sensitive.
           for (const ff of [1, 2]) {
             const clk = hi(`CLK${ff}`);
             const key = `q${ff}`;
             if (rt[key] === undefined) rt[key] = false;
-            if (hi(`SET${ff}`)) rt[key] = true;
-            else if (hi(`RST${ff}`)) rt[key] = false;
-            else if (clk && !rt[`clkPrev${ff}`]) rt[key] = hi(`D${ff}`);
-            rt[`clkNext${ff}`] = clk;
+            let next = rt[key];
+            // Rising edge = clock high now AND was *explicitly* low last frame.
+            // Requiring `=== false` (not just falsy) means the first frame —
+            // where clkPrev is still undefined and the clock net may not have
+            // settled yet (e.g. a gate-driven clock reads 0 mid-settle) — never
+            // counts as an edge. clkPrev is committed once per frame below.
+            if (hi(`SET${ff}`)) next = true;
+            else if (hi(`RST${ff}`)) next = false;
+            else if (clk && rt[`clkPrev${ff}`] === false) next = hi(`D${ff}`);
+            rt[`qNext${ff}`] = next;
+            rt[`clkCur${ff}`] = clk;
             drive(`Q${ff}`, rt[key]);
             drive(`Q${ff}N`, !rt[key]);
           }
@@ -332,13 +345,23 @@ export function runSim(state, dt, t) {
 
   solve();
   evalArduinos();
-  for (let pass = 0; pass < 3; pass++) { evalICs(); evalArduinos(); solve(); }
+  // Gate outputs only advance one logic level per evalICs pass, so the pass
+  // count bounds how deep a combinational chain can settle in a frame. Use
+  // enough passes for multi-level decode/feedback (e.g. a ring counter's
+  // self-start NOR tree) to propagate before flip-flops sample their inputs.
+  for (let pass = 0; pass < 10; pass++) { evalICs(); evalArduinos(); solve(); }
 
-  // latch flip-flop clock levels for next frame's edge detection
+  // Commit each flip-flop's next-state (computed above from fully-settled
+  // inputs) and latch the clock level for next frame's rising-edge detection.
+  // Committing here — once, after the settle passes — makes a clock edge
+  // advance the FF exactly once instead of on every settle pass.
   for (const inst of icQueue) {
     const rt = inst.rt;
     if (inst.def.sim.icType === 'cd4013') {
-      rt.clkPrev1 = rt.clkNext1; rt.clkPrev2 = rt.clkNext2;
+      for (const ff of [1, 2]) {
+        if (rt[`qNext${ff}`] !== undefined) rt[`q${ff}`] = rt[`qNext${ff}`];
+        rt[`clkPrev${ff}`] = rt[`clkCur${ff}`];
+      }
     }
   }
 

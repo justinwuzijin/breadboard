@@ -17,22 +17,68 @@ function txt(g, x, y, s, size = 6, fill = '#e8e6e0', anchor = 'middle', weight =
   }, g);
 }
 
-// resistor color bands from value (4- or 5-band)
+// ---- resistor color code (EIA-RS-279) ---------------------------------------
+// Digit / multiplier band colours, indexed 0-9. These also serve as the
+// multiplier band for exponents 0-9; gold/silver cover the fractional decades.
 const BANDC = ['#141414', '#7b4a12', '#c62828', '#ef6c00', '#f2c832', '#2e7d32', '#1565c0', '#7b1fa2', '#9e9e9e', '#fafafa'];
-export function resistorBands(v) {
-  if (v <= 0) return ['#141414'];
-  let e = 0, m = v;
-  while (m >= 100 && Number.isInteger(m / 10)) { m /= 10; e++; }
-  if (m < 100 && Number.isInteger(m)) {
-    // 2 significant digits
-    if (m < 10) { m *= 10; e--; }
-    return [BANDC[Math.floor(m / 10)], BANDC[m % 10], BANDC[Math.max(0, e)], '#c9a227'];
+const BAND_NAMES = ['black', 'brown', 'red', 'orange', 'yellow', 'green', 'blue', 'violet', 'grey', 'white'];
+const GOLD = '#c9a227', SILVER = '#b8bcc2';
+
+// Tolerance band: percent -> { color, name }. These are the values a lab
+// carbon/metal-film resistor can carry (5% gold and 1% brown are the staples).
+const TOLERANCE = {
+  10: { c: SILVER, n: 'silver' },
+  5: { c: GOLD, n: 'gold' },
+  2: { c: '#c62828', n: 'red' },
+  1: { c: '#7b4a12', n: 'brown' },
+  0.5: { c: '#2e7d32', n: 'green' },
+  0.25: { c: '#1565c0', n: 'blue' },
+  0.1: { c: '#7b1fa2', n: 'violet' },
+};
+
+function multiplierBand(exp) {
+  if (exp === -1) return { c: GOLD, n: 'gold' };
+  if (exp === -2) return { c: SILVER, n: 'silver' };
+  const i = Math.max(0, Math.min(9, exp));
+  return { c: BANDC[i], n: BAND_NAMES[i] };
+}
+
+// Break a value into `n` significant digits + a power-of-ten multiplier.
+function significand(v, n) {
+  let mult = Math.floor(Math.log10(v)) - (n - 1);
+  let mant = Math.round(v / Math.pow(10, mult));
+  if (mant >= Math.pow(10, n)) { mant = Math.round(mant / 10); mult++; }
+  const digits = String(mant).padStart(n, '0').split('').map(Number);
+  return { digits, mult };
+}
+
+// Full decode: pick a 4-band (2 sig figs) code when it reproduces the value
+// exactly, otherwise fall back to a 5-band (3 sig figs) precision code.
+export function resistorColorCode(v, tol = 5) {
+  const tolBand = TOLERANCE[tol] || TOLERANCE[5];
+  if (!(v > 0)) {
+    return { colors: [BANDC[0]], names: ['black'], bands: 1, value: 0, tol };
   }
-  // 3 significant digits (e.g. 536)
-  m = v; e = 0;
-  while (m >= 1000) { m /= 10; e++; }
-  m = Math.round(m);
-  return [BANDC[Math.floor(m / 100)], BANDC[Math.floor(m / 10) % 10], BANDC[m % 10], BANDC[Math.max(0, e)], '#c9a227'];
+  let code = significand(v, 2);
+  const exact2 = +code.digits.join('') * Math.pow(10, code.mult) === v;
+  if (!exact2) code = significand(v, 3);
+  const colors = [];
+  const names = [];
+  for (const d of code.digits) { colors.push(BANDC[d]); names.push(BAND_NAMES[d]); }
+  const m = multiplierBand(code.mult);
+  colors.push(m.c); names.push(`${m.n} (\u00d710${supExp(code.mult)})`);
+  colors.push(tolBand.c); names.push(`${tolBand.n} (\u00b1${tol}%)`);
+  return { colors, names, bands: colors.length, value: v, tol };
+}
+
+function supExp(e) {
+  const map = { '-': '\u207b', 0: '\u2070', 1: '\u00b9', 2: '\u00b2', 3: '\u00b3', 4: '\u2074', 5: '\u2075', 6: '\u2076', 7: '\u2077', 8: '\u2078', 9: '\u2079' };
+  return String(e).split('').map((c) => map[c] ?? c).join('');
+}
+
+// Ordered band colours only (digits -> multiplier -> tolerance).
+export function resistorBands(v, tol = 5) {
+  return resistorColorCode(v, tol).colors;
 }
 export function fmtOhm(v) {
   if (v >= 1e6) return `${+(v / 1e6).toFixed(2)} M\u03A9`;
@@ -49,17 +95,37 @@ function placePhoto(g, href, x, y, w, h, { multiply = false } = {}) {
   return im;
 }
 
-function drawAxialResistor(g, span, _value) {
+function drawAxialResistor(g, span, value, tol = 5) {
   const L = span * P;
   // Sharp metal leads into breadboard holes
   lead(g, 0, 0, L * 0.16, 0, 1.5);
   lead(g, L * 0.84, 0, L, 0, 1.5);
-  // Photo body (leads cropped out so hole tips stay vector-aligned)
-  const nest = E('svg', {
-    x: L * 0.14, y: -7, width: L * 0.72, height: 14,
-    viewBox: '70 8 278 46', overflow: 'hidden',
-  }, g);
-  placePhoto(nest, '/img/resistor.png', 0, 0, 418, 62, { multiply: true });
+
+  // Beige carbon-film body with rounded end bulbs
+  const bx = L * 0.17, bw = L * 0.66;
+  const bh = 13, by = -bh / 2;
+  const bulbR = bh * 0.5;
+  E('ellipse', { cx: bx, cy: 0, rx: bulbR * 0.8, ry: bulbR, fill: '#b89463' }, g);
+  E('ellipse', { cx: bx + bw, cy: 0, rx: bulbR * 0.8, ry: bulbR, fill: '#b89463' }, g);
+  E('rect', { x: bx, y: by, width: bw, height: bh, rx: 3.2, fill: '#d2b083' }, g);
+  // Cylindrical shading (top highlight, bottom shadow)
+  E('rect', { x: bx, y: by, width: bw, height: bh * 0.34, rx: 3.2, fill: 'rgba(255,255,255,0.28)' }, g);
+  E('rect', { x: bx, y: by + bh * 0.66, width: bw, height: bh * 0.34, rx: 3.2, fill: 'rgba(0,0,0,0.18)' }, g);
+
+  // Colour bands computed from the value. Value bands cluster toward the left
+  // lead; the tolerance band sits alone near the right, as on a real resistor.
+  const colors = resistorBands(value, tol);
+  const bandW = 2.7;
+  const first = bx + bw * 0.16;
+  const gap = 3.9;
+  for (let i = 0; i < colors.length; i++) {
+    const isTol = i === colors.length - 1;
+    const cx = isTol ? bx + bw * 0.86 : first + i * gap;
+    E('rect', { x: cx - bandW / 2, y: by, width: bandW, height: bh, fill: colors[i] }, g);
+    // thin shading so light stripes stay legible on the tan body
+    E('rect', { x: cx - bandW / 2, y: by, width: bandW, height: bh * 0.34, fill: 'rgba(255,255,255,0.14)' }, g);
+    E('rect', { x: cx - bandW / 2, y: by + bh * 0.66, width: bandW, height: bh * 0.34, fill: 'rgba(0,0,0,0.14)' }, g);
+  }
 }
 
 function drawDIP(g, half, spanRows, label) {
@@ -437,8 +503,8 @@ const rdef = (id, value, name, filter = '') => ({
   id, cat: 'resistors', name, kind: 'board',
   pins: [{ x: 0, y: 0, name: 'a' }, { x: 3, y: 0, name: 'b' }],
   sim: { type: 'resistor' },
-  props: { ohms: value },
-  draw: (g, inst) => drawAxialResistor(g, 3, inst.props.ohms),
+  props: { ohms: value, tol: 5 },
+  draw: (g, inst) => drawAxialResistor(g, 3, inst.props.ohms, inst.props.tol ?? 5),
   thumbImg: '/img/resistor.png', filter,
   thumb: { x: -4, y: -14, w: 3 * P + 8, h: 28 },
 });

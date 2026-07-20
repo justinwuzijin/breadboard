@@ -415,24 +415,36 @@ export function buildBreadboard(circuit, api) {
     api.addPart(DEF_BY_ID.get('button'), { holes: btnHoles, rot: 0 });
     markHoles(btnHoles);
     const netA = find(e.a), netB = find(e.b || e.a);
+    // Tactile switch: a1↔a2 and b1↔b2 are ALWAYS shorted. Only a1↔b1
+    // closes on press (top↔bottom, same column). Never put the two switch
+    // nets on a1/a2 (c0 and c0+2 top) — that welds them closed permanently.
     if (e.type === 'lin') {
-      // signal on top, ground on bottom — press bridges halves
+      // signal on top, ground on bottom — press pulls signal low
       registerNet(netA, c0, true);
       powerMinus.set(`${c0}:0`, { col: c0, top: false });
       placed.lin++;
-    } else if (isGroundR(netA)) {
+    } else if (isPlusR(netA) && !isPlusR(netB)) {
+      // Lab 4 CLK/Reset style: VCC -- switch -- signal (active-high pulse)
       registerNet(netA, c0, true);
-      registerNet(netA, c0, false);
-      registerNet(netB, c0 + 2, true);
+      registerNet(netB, c0, false);
       placed.sw++;
-    } else if (isGroundR(netB)) {
+    } else if (isPlusR(netB) && !isPlusR(netA)) {
+      registerNet(netB, c0, true);
+      registerNet(netA, c0, false);
+      placed.sw++;
+    } else if (isGroundR(netA) && !isGroundR(netB)) {
+      // signal on top, ground on bottom — press to ground
+      registerNet(netB, c0, true);
+      registerNet(netA, c0, false);
+      placed.sw++;
+    } else if (isGroundR(netB) && !isGroundR(netA)) {
       registerNet(netA, c0, true);
-      registerNet(netB, c0 + 2, true);
-      registerNet(netB, c0 + 2, false);
+      registerNet(netB, c0, false);
       placed.sw++;
     } else {
+      // Two signal nets: bridge across the ravine on one column
       registerNet(netA, c0, true);
-      registerNet(netB, c0 + 2, true);
+      registerNet(netB, c0, false);
       placed.sw++;
     }
     swCursor = c0 + 3;

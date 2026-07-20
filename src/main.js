@@ -2,7 +2,7 @@
 
 import './style.css';
 import { P, E, BODY, buildBoard, nearestHole, HOLE_BY_ID, baseNetOf } from './board.js';
-import { CATALOG, DEF_BY_ID, WIRE_COLORS, fmtOhm } from './parts.js';
+import { CATALOG, DEF_BY_ID, WIRE_COLORS, fmtOhm, resistorColorCode } from './parts.js';
 import { runSim, portNode } from './sim.js';
 import { importFromSim, exportBreadboardToText, circuitHasBuildableContent } from './bridge.js';
 
@@ -171,10 +171,11 @@ function fitView() {
   }
 
   const b = contentBounds();
-  // Reserve chrome so the board centers with room for the fixed wirebar underneath
+  // Reserve chrome so the board centers below the floating topbar and above
+  // the fixed wirebar underneath (the canvas now fills the full stage height)
   const padL = 48;
   const padR = 48;
-  const padT = 28;
+  const padT = 84;
   const padB = 72;
   const availW = Math.max(80, vw - padL - padR);
   const availH = Math.max(80, vh - padT - padB);
@@ -346,35 +347,158 @@ function positionPart(inst) {
   }
 }
 
-function wirePath(x1, y1, x2, y2) {
-  const dx = x2 - x1, dy = y2 - y1;
-  const len = Math.hypot(dx, dy) || 1;
-  // Slight routing bend — not a soft cartoon sag
-  const bend = Math.min(14, len * 0.12);
-  const mx = (x1 + x2) / 2 - (dy / len) * bend;
-  const my = (y1 + y2) / 2 + (dx / len) * bend;
-  return `M ${x1} ${y1} Q ${mx} ${my} ${x2} ${y2}`;
+// Breadboard routing channels (keep runs off IC bodies / diagonal spaghetti)
+const WIRE_RAVINE_Y = 9.9 * P;
+const WIRE_CH_TOP = 3.25 * P;
+const WIRE_CH_BOT = 16.55 * P;
+
+function wireZone(y) {
+  if (y < 3.6 * P) return 'railT';
+  if (y < WIRE_RAVINE_Y) return 'top';
+  if (y < 16.2 * P) return 'bot';
+  return 'railB';
 }
+
+/** Orthogonal path with tight corner fillets — rigid jumper look. */
+function roundedOrtho(points, radius = 2.4) {
+  const pts = [];
+  for (const p of points) {
+    const prev = pts[pts.length - 1];
+    if (!prev || prev[0] !== p[0] || prev[1] !== p[1]) pts.push(p);
+  }
+  if (pts.length < 2) return `M ${pts[0][0]} ${pts[0][1]}`;
+  if (pts.length === 2) {
+    return `M ${pts[0][0]} ${pts[0][1]} L ${pts[1][0]} ${pts[1][1]}`;
+  }
+  let d = `M ${pts[0][0]} ${pts[0][1]}`;
+  for (let i = 1; i < pts.length - 1; i++) {
+    const [x0, y0] = pts[i - 1];
+    const [x1, y1] = pts[i];
+    const [x2, y2] = pts[i + 1];
+    const len1 = Math.hypot(x1 - x0, y1 - y0);
+    const len2 = Math.hypot(x2 - x1, y2 - y1);
+    const r = Math.min(radius, len1 * 0.5, len2 * 0.5);
+    if (r < 0.4) {
+      d += ` L ${x1} ${y1}`;
+      continue;
+    }
+    const ax = x1 - ((x1 - x0) / len1) * r;
+    const ay = y1 - ((y1 - y0) / len1) * r;
+    const bx = x1 + ((x2 - x1) / len2) * r;
+    const by = y1 + ((y2 - y1) / len2) * r;
+    d += ` L ${ax} ${ay} Q ${x1} ${y1} ${bx} ${by}`;
+  }
+  const last = pts[pts.length - 1];
+  d += ` L ${last[0]} ${last[1]}`;
+  return d;
+}
+
+function wireChannelY(y1, y2, laneOff) {
+  const z1 = wireZone(y1);
+  const z2 = wireZone(y2);
+  const topish = (z) => z === 'top' || z === 'railT';
+  const botish = (z) => z === 'bot' || z === 'railB';
+  if (topish(z1) && topish(z2)) {
+    // Horizontal run just above the higher pin (rows a–d), not across chip bodies
+    let ch = Math.min(y1, y2) - P;
+    ch = Math.min(ch, 7.4 * P);
+    ch = Math.max(ch, WIRE_CH_TOP);
+    return ch + laneOff;
+  }
+  if (botish(z1) && botish(z2)) {
+    let ch = Math.max(y1, y2) + P;
+    ch = Math.max(ch, 12.4 * P);
+    ch = Math.min(ch, WIRE_CH_BOT);
+    return ch + laneOff;
+  }
+  // Cross the ravine in the center gutter
+  return WIRE_RAVINE_Y + laneOff;
+}
+
+function wirePath(x1, y1, x2, y2, lane = 0) {
+  const adx = Math.abs(x2 - x1);
+  const ady = Math.abs(y2 - y1);
+  const laneOff = ((lane % 9) - 4) * 3.1;
+
+  // Pure vertical stays a single segment
+  if (adx < 0.5) return roundedOrtho([[x1, y1], [x2, y2]]);
+
+  // Long near-horizontal runs: never skim pin rows (e/f) over buttons / ICs
+  if (ady < P * 0.75 && adx > P * 2.5) {
+    const ch = wireChannelY(y1, y2, laneOff);
+    return roundedOrtho([[x1, y1], [x1, ch], [x2, ch], [x2, y2]]);
+  }
+
+  // Short horizontal only (adjacent holes)
+  if (ady < 0.5) return roundedOrtho([[x1, y1], [x2, y2]]);
+
+  // Short local jumpers (rail taps, nearby pins): simple vertical-first L
+  if (adx <= P * 2.5 && ady <= P * 5.5) {
+    return roundedOrtho([[x1, y1], [x1, y2], [x2, y2]]);
+  }
+
+  // Longer runs: Manhattan via a side/gutter channel (V–H–V)
+  const ch = wireChannelY(y1, y2, laneOff);
+  return roundedOrtho([[x1, y1], [x1, ch], [x2, ch], [x2, y2]]);
+}
+
+/** Interactive part under a world point — buttons win so wires can't block presses. */
+function interactivePartAt(wx, wy) {
+  let best = null;
+  let bestD = Infinity;
+  for (const inst of state.parts) {
+    if (inst.def.sim?.type !== 'button' || !inst.holes?.length) continue;
+    const hs = inst.holes.map((id) => HOLE_BY_ID.get(id)).filter(Boolean);
+    if (!hs.length) continue;
+    const cx = hs.reduce((s, h) => s + h.x, 0) / hs.length;
+    const cy = hs.reduce((s, h) => s + h.y, 0) / hs.length;
+    const d = Math.hypot(wx - cx, wy - cy);
+    // Cap + housing footprint
+    if (d < P * 1.5 && d < bestD) {
+      bestD = d;
+      best = inst;
+    }
+  }
+  return best;
+}
+
 function renderWire(w) {
   if (w.g) w.g.remove();
   const g = E('g', { class: 'wire' }, wiresL);
   w.g = g;
   const [x1, y1] = endpointPos(w.a);
   const [x2, y2] = endpointPos(w.b);
-  const d = wirePath(x1, y1, x2, y2);
-  const thick = w.kind === 'gator' ? 4.2 : 2.8;
-  E('path', { d, stroke: 'rgba(0,0,0,0.2)', 'stroke-width': thick + 1.2, fill: 'none', 'stroke-linecap': 'butt', transform: 'translate(0,1)' }, g);
-  E('path', { d, stroke: w.color, 'stroke-width': thick, fill: 'none', 'stroke-linecap': 'butt' }, g);
+  const lane = Math.max(0, state.wires.indexOf(w));
+  const d = wirePath(x1, y1, x2, y2, lane);
+  const thick = w.kind === 'gator' ? 4.2 : 2.6;
+  const pathAttrs = {
+    d,
+    fill: 'none',
+    'stroke-linecap': 'butt',
+    'stroke-linejoin': 'round',
+    'pointer-events': 'none',
+  };
+  E('path', { ...pathAttrs, stroke: 'rgba(0,0,0,0.18)', 'stroke-width': thick + 1.1, transform: 'translate(0,1)' }, g);
+  E('path', { ...pathAttrs, stroke: w.color, 'stroke-width': thick }, g);
   for (const [x, y] of [[x1, y1], [x2, y2]]) {
     if (w.kind === 'gator') {
-      E('path', { d: `M ${x - 3.5} ${y - 5} L ${x} ${y} L ${x + 3.5} ${y - 5}`, stroke: '#c0c4ca', 'stroke-width': 2.4, fill: 'none', 'stroke-linecap': 'butt' }, g);
+      E('path', { d: `M ${x - 3.5} ${y - 5} L ${x} ${y} L ${x + 3.5} ${y - 5}`, stroke: '#c0c4ca', 'stroke-width': 2.4, fill: 'none', 'stroke-linecap': 'butt', 'pointer-events': 'none' }, g);
     } else {
       // Exposed metal tip seated in the hole
-      E('rect', { x: x - 1.1, y: y - 1.1, width: 2.2, height: 2.2, fill: '#c0c4ca' }, g);
+      E('rect', { x: x - 1.1, y: y - 1.1, width: 2.2, height: 2.2, fill: '#c0c4ca', 'pointer-events': 'none' }, g);
     }
   }
   const hit = E('path', { d, stroke: 'rgba(0,0,0,0)', 'stroke-width': 12, fill: 'none' }, g);
-  hit.addEventListener('pointerdown', (e) => { e.stopPropagation(); select({ kind: 'wire', wire: w }); });
+  hit.addEventListener('pointerdown', (e) => {
+    e.stopPropagation();
+    const pt = toWorld(e);
+    const btn = interactivePartAt(pt.x, pt.y);
+    if (btn) {
+      beginPartDrag(e, btn, pt);
+      return;
+    }
+    select({ kind: 'wire', wire: w });
+  });
 }
 
 function renderAll() {
@@ -493,12 +617,6 @@ function findArduinoInst(uid = serialSourceUid) {
   return state.parts.find((p) => p.def.sim?.type === 'arduino') || null;
 }
 
-function setSerialHeight(px) {
-  const h = Math.round(Math.min(window.innerHeight * 0.75, Math.max(120, px)));
-  document.documentElement.style.setProperty('--serial-h', `${h}px`);
-  return h;
-}
-
 function openSerialMonitor(inst) {
   const serialMonitor = document.getElementById('serial-monitor');
   if (inst) serialSourceUid = inst.uid;
@@ -510,11 +628,13 @@ function openSerialMonitor(inst) {
   appEl.classList.add('serial-open');
   lastSerialVersion = -1;
   updateSerialOutput(true);
+  fitDuring(360);
 }
 
 function closeSerialMonitor() {
   document.getElementById('serial-monitor').classList.remove('open');
   appEl.classList.remove('serial-open');
+  fitDuring(360);
 }
 
 function updateSerialOutput(force = false) {
@@ -552,6 +672,7 @@ function insRow(parent, labelText) {
 function buildInspector() {
   inspector.hidden = !sel;
   inspector.innerHTML = '';
+  inspector.classList.remove('ins-arduino');
   if (!sel) return;
   const h = document.createElement('h3');
   inspector.appendChild(h);
@@ -574,16 +695,71 @@ function buildInspector() {
     const type = inst.def.sim?.type;
 
     if (type === 'resistor') {
+      if (inst.props.tol == null) inst.props.tol = 5;
       const row = insRow(inspector, 'value');
       const inp = document.createElement('input');
       inp.type = 'number'; inp.min = 1; inp.step = 1; inp.value = inst.props.ohms;
-      inp.onchange = () => { inst.props.ohms = Math.max(1, +inp.value || 1000); renderPart(inst); refreshSelBox(); saveSoon(); };
+      inp.setAttribute('list', 'res-e12');
       row.appendChild(inp);
+
+      // Common E12 lab values (×decades) for quick selection.
+      if (!document.getElementById('res-e12')) {
+        const dl = document.createElement('datalist');
+        dl.id = 'res-e12';
+        const base = [10, 12, 15, 18, 22, 27, 33, 39, 47, 56, 68, 82];
+        for (const mult of [1, 10, 100, 1000, 10000, 100000]) {
+          for (const b of base) {
+            const o = document.createElement('option');
+            o.value = b * mult;
+            dl.appendChild(o);
+          }
+        }
+        document.body.appendChild(dl);
+      }
+
+      const tolRow = insRow(inspector, 'tolerance');
+      const tolSel = document.createElement('select');
+      for (const [pct, label] of [[5, '\u00b15% (gold)'], [10, '\u00b110% (silver)'], [2, '\u00b12% (red)'], [1, '\u00b11% (brown)']]) {
+        const o = document.createElement('option');
+        o.value = pct; o.textContent = label;
+        if (pct === inst.props.tol) o.selected = true;
+        tolSel.appendChild(o);
+      }
+      tolRow.appendChild(tolSel);
+
+      // Live decoded color code: swatch strip + human-readable band names.
+      const strip = document.createElement('div');
+      strip.className = 'ins-bands';
       const note = document.createElement('div');
       note.className = 'ins-note';
-      note.textContent = fmtOhm(inst.props.ohms);
+      inspector.appendChild(strip);
       inspector.appendChild(note);
-      inp.addEventListener('input', () => { note.textContent = fmtOhm(+inp.value || 0); });
+
+      const refreshCode = (ohms, tol) => {
+        const code = resistorColorCode(ohms, tol);
+        strip.innerHTML = '';
+        for (const c of code.colors) {
+          const sw = document.createElement('span');
+          sw.className = 'band-sw';
+          sw.style.background = c;
+          strip.appendChild(sw);
+        }
+        note.textContent = `${fmtOhm(ohms)} \u00b7 ${code.names.join(' \u00b7 ')}`;
+      };
+      refreshCode(inst.props.ohms, inst.props.tol);
+
+      inp.addEventListener('input', () => refreshCode(Math.max(1, +inp.value || 0), inst.props.tol));
+      inp.onchange = () => {
+        inst.props.ohms = Math.max(1, +inp.value || 1000);
+        inp.value = inst.props.ohms;
+        renderPart(inst); refreshSelBox(); saveSoon();
+        refreshCode(inst.props.ohms, inst.props.tol);
+      };
+      tolSel.onchange = () => {
+        inst.props.tol = +tolSel.value;
+        renderPart(inst); refreshSelBox(); saveSoon();
+        refreshCode(inst.props.ohms, inst.props.tol);
+      };
     }
     if (type === 'pot') {
       const row = insRow(inspector, 'wiper');
@@ -648,9 +824,24 @@ function buildInspector() {
       row.appendChild(b);
     }
     if (type === 'button') {
+      const row = insRow(inspector, 'hold');
+      const b = document.createElement('button');
+      b.textContent = inst.rt.held ? 'held' : 'off';
+      b.style.cssText = 'border:none;border-radius:4px;padding:4px 12px;cursor:pointer;background:rgba(0,0,0,0.07)';
+      if (inst.rt.held) b.style.background = '#f97316';
+      if (inst.rt.held) b.style.color = '#fff';
+      b.onclick = () => {
+        inst.rt.held = !inst.rt.held;
+        inst.rt.pressed = !!inst.rt.held;
+        b.textContent = inst.rt.held ? 'held' : 'off';
+        b.style.background = inst.rt.held ? '#f97316' : 'rgba(0,0,0,0.07)';
+        b.style.color = inst.rt.held ? '#fff' : '';
+        saveSoon();
+      };
+      row.appendChild(b);
       const note = document.createElement('div');
       note.className = 'ins-note';
-      note.textContent = 'press and hold the cap to close the switch.';
+      note.textContent = 'press and hold to click. shift+click (or hold) to keep it pushed down.';
       inspector.appendChild(note);
     }
     if (type === 'dmm') {
@@ -660,88 +851,125 @@ function buildInspector() {
       inspector.appendChild(note);
     }
     if (type === 'arduino') {
-      const row = insRow(inspector, 'sketch');
-      const textarea = document.createElement('textarea');
-      textarea.style.cssText = 'width:100%;height:200px;font-family:monospace;font-size:11px;';
-      textarea.value = inst.props.code || `// Arduino Uno Sketch
-void setup() {
-  // Initialize pins
-  pinMode(13, OUTPUT);  // Built-in LED
+      inspector.classList.add('ins-arduino');
+
+      const DEFAULT_SKETCH = `void setup() {
+  pinMode(13, OUTPUT);
 }
 
 void loop() {
-  // Main program loop
   digitalWrite(13, HIGH);
   digitalWrite(13, LOW);
 }`;
-      textarea.oninput = () => { inst.props.code = textarea.value; saveSoon(); };
-      row.appendChild(textarea);
+      if (!inst.props.code) inst.props.code = DEFAULT_SKETCH;
 
-      const uploadRow = document.createElement('div');
-      uploadRow.className = 'ins-row';
+      const fileRow = document.createElement('div');
+      fileRow.className = 'ins-sketch-file';
+      const fileName = document.createElement('span');
+      fileName.className = 'ins-sketch-name';
+      const refreshFileLabel = () => {
+        const name = inst.props.sketchName || 'no sketch loaded';
+        fileName.textContent = name;
+        fileName.title = name;
+        fileRow.classList.toggle('loaded', !!inst.props.sketchName);
+      };
+      refreshFileLabel();
+      fileRow.appendChild(fileName);
+      inspector.appendChild(fileRow);
+
+      const status = document.createElement('div');
+      status.className = 'ins-note';
+      status.textContent = inst.props.sketchName
+        ? 'sketch ready — press run'
+        : 'upload a .ino, then press run';
+
+      const runSketch = () => {
+        if (!inst.props.code) {
+          status.textContent = 'upload a .ino first';
+          status.classList.add('err');
+          return false;
+        }
+        if (!inst.rt?.arduino) return false;
+        const result = inst.rt.arduino.loadSketch(inst.props.code);
+        if (!result.success) {
+          status.textContent = result.error || 'could not run sketch';
+          status.classList.add('err');
+          return false;
+        }
+        status.textContent = 'running';
+        status.classList.remove('err');
+        saveSoon();
+        return true;
+      };
+
+      const actions = document.createElement('div');
+      actions.className = 'ins-sketch-actions';
+
+      const fileInput = document.createElement('input');
+      fileInput.type = 'file';
+      fileInput.accept = '.ino,.txt,text/plain';
+      fileInput.hidden = true;
+      fileInput.onchange = async () => {
+        const file = fileInput.files?.[0];
+        fileInput.value = '';
+        if (!file) return;
+        try {
+          const text = await file.text();
+          inst.props.code = text;
+          inst.props.sketchName = file.name;
+          refreshFileLabel();
+          status.textContent = `loaded ${file.name}`;
+          status.classList.remove('err');
+          saveSoon();
+        } catch (err) {
+          status.textContent = err?.message || 'could not read file';
+          status.classList.add('err');
+        }
+      };
+
       const uploadBtn = document.createElement('button');
-      uploadBtn.textContent = 'upload sketch';
-      uploadBtn.className = 'ins-text-btn';
-      uploadBtn.onclick = () => {
-        if (inst.rt && inst.rt.arduino) {
-          const result = inst.rt.arduino.loadSketch(inst.props.code);
-          if (result.success) {
-            uploadBtn.textContent = 'uploaded \u2713';
-            setTimeout(() => {
-              uploadBtn.textContent = 'upload sketch';
-            }, 2000);
-          } else {
-            alert('Error loading sketch:\n' + result.error);
-          }
+      uploadBtn.type = 'button';
+      uploadBtn.className = 'ins-upload-btn';
+      uploadBtn.textContent = 'upload .ino';
+      uploadBtn.onclick = () => fileInput.click();
+
+      const runBtn = document.createElement('button');
+      runBtn.type = 'button';
+      runBtn.className = 'ins-run-btn';
+      runBtn.textContent = 'run';
+      runBtn.onclick = () => {
+        if (runSketch()) {
+          runBtn.textContent = 'running';
+          setTimeout(() => { runBtn.textContent = 'run'; }, 1200);
         }
       };
-      uploadRow.appendChild(uploadBtn);
-      inspector.appendChild(uploadRow);
 
-      const statusDiv = document.createElement('div');
-      statusDiv.className = 'ins-note';
-      statusDiv.style.cssText = 'margin-top:8px;';
-      statusDiv.textContent = '\u2713 Arduino always powered';
-      inspector.appendChild(statusDiv);
+      actions.append(uploadBtn, runBtn, fileInput);
+      inspector.appendChild(actions);
+      inspector.appendChild(status);
 
-      const note = document.createElement('div');
-      note.className = 'ins-api';
-      note.innerHTML = `
-        <div class="ins-api-block">
-          <span class="ins-api-label">Supported</span>
-          <code>pinMode</code>, <code>digitalWrite</code>, <code>digitalRead</code>,
-          <code>analogRead</code>, <code>analogWrite</code>,
-          <code>millis</code>, <code>micros</code>,
-          <code>Serial.print</code> / <code>println</code>
-        </div>
-        <div class="ins-api-block">
-          <span class="ins-api-label">Not supported</span>
-          <code>delay()</code>, <code>delayMicroseconds()</code> — use <code>millis()</code> instead
-        </div>`;
-      inspector.appendChild(note);
-
-      // Serial Monitor button
-      const serialRow = document.createElement('div');
-      serialRow.className = 'ins-row';
-      serialRow.style.cssText = 'margin-top:10px;';
       const serialBtn = document.createElement('button');
-      const serialOpen = document.getElementById('serial-monitor').classList.contains('open');
-      serialBtn.textContent = serialOpen ? 'Close Serial Monitor' : 'Open Serial Monitor';
-      serialBtn.className = 'ins-text-btn';
-      serialBtn.onclick = () => {
-        const serialMonitor = document.getElementById('serial-monitor');
-        const isOpen = serialMonitor.classList.contains('open');
-        if (isOpen) {
-          closeSerialMonitor();
-          serialBtn.textContent = 'Open Serial Monitor';
-        } else {
-          openSerialMonitor(inst);
-          serialBtn.textContent = 'Close Serial Monitor';
-        }
-        setTimeout(() => fitView(), 350);
+      serialBtn.type = 'button';
+      serialBtn.className = 'ins-serial-btn';
+      const syncSerialLabel = () => {
+        const open = document.getElementById('serial-monitor').classList.contains('open');
+        serialBtn.textContent = open ? 'close serial monitor' : 'open serial monitor';
+        serialBtn.classList.toggle('active', open);
       };
-      serialRow.appendChild(serialBtn);
-      inspector.appendChild(serialRow);
+      syncSerialLabel();
+      serialBtn.onclick = () => {
+        const isOpen = document.getElementById('serial-monitor').classList.contains('open');
+        if (isOpen) closeSerialMonitor();
+        else openSerialMonitor(inst);
+        syncSerialLabel();
+      };
+      inspector.appendChild(serialBtn);
+
+      const tip = document.createElement('div');
+      tip.className = 'ins-note';
+      tip.style.marginTop = '8px';
+      tip.textContent = 'no delay() — use millis() instead';
+      inspector.appendChild(tip);
     }
 
     const actions = document.createElement('div');
@@ -1130,6 +1358,10 @@ svg.addEventListener('pointerdown', (e) => {
   const port = portAt(w.x, w.y);
   if (port) { startWire(port); return; }
 
+  // Push buttons always win over wires drawn across them
+  const btn = interactivePartAt(w.x, w.y);
+  if (btn) { beginPartDrag(e, btn, w); return; }
+
   // part hit -> drag it
   let g = e.target;
   while (g && g !== svg && !(g.classList && g.classList.contains('part'))) g = g.parentNode;
@@ -1175,15 +1407,16 @@ function beginPartDrag(e, inst, startW) {
   const origHoles = isBoard ? [...inst.holes] : null;
   let lastFp = null;
 
-  // momentary pushbutton press
+  // momentary pushbutton press; shift+click latches it down
   const type = inst.def.sim?.type;
-  if (type === 'button') { inst.rt.pressed = true; }
+  const latchClick = type === 'button' && e.shiftKey;
+  if (type === 'button' && !latchClick) inst.rt.pressed = true;
 
   dragging = { inst };
   const move = (ev) => {
     const w = toWorld(ev);
     if (!moved && Math.hypot(w.x - startW.x, w.y - startW.y) < 5 / view.k) return;
-    if (!moved && type === 'button') inst.rt.pressed = false;
+    if (!moved && type === 'button' && !inst.rt.held) inst.rt.pressed = false;
     moved = true;
     if (isBoard) {
       lastFp = footprintAt(inst.def, w.x - off.x, w.y - off.y, inst.rot);
@@ -1205,7 +1438,17 @@ function beginPartDrag(e, inst, startW) {
     document.removeEventListener('pointermove', move);
     document.removeEventListener('pointerup', up);
     dragging = null;
-    if (type === 'button') inst.rt.pressed = false;
+    if (type === 'button') {
+      if (!moved && latchClick) {
+        inst.rt.held = !inst.rt.held;
+        inst.rt.pressed = !!inst.rt.held;
+        saveSoon();
+      } else if (!inst.rt.held) {
+        inst.rt.pressed = false;
+      } else {
+        inst.rt.pressed = true;
+      }
+    }
     if (!moved) {
       // simple click: toggles for switches, select for all
       if (type === 'spst') { inst.props.closed = !inst.props.closed; saveSoon(); }
@@ -1508,34 +1751,6 @@ document.getElementById('serial-clear').addEventListener('click', () => {
   }
 });
 
-// Drag the top edge of the serial monitor to resize height
-(() => {
-  const handle = document.getElementById('serial-resize');
-  const panel = document.getElementById('serial-monitor');
-  if (!handle || !panel) return;
-  let startY = 0, startH = 0;
-  handle.addEventListener('pointerdown', (e) => {
-    e.preventDefault();
-    startY = e.clientY;
-    startH = panel.getBoundingClientRect().height;
-    panel.classList.add('resizing');
-    handle.setPointerCapture(e.pointerId);
-    const move = (ev) => {
-      setSerialHeight(startH + (startY - ev.clientY));
-      fitView();
-    };
-    const up = () => {
-      panel.classList.remove('resizing');
-      handle.releasePointerCapture(e.pointerId);
-      handle.removeEventListener('pointermove', move);
-      handle.removeEventListener('pointerup', up);
-      fitView();
-    };
-    handle.addEventListener('pointermove', move);
-    handle.addEventListener('pointerup', up);
-  });
-})();
-
 // Re-fit every frame while side panels animate so the board scales with the
 // stage instead of jumping once at the end of the CSS transition.
 let layoutAnim = 0;
@@ -1814,13 +2029,15 @@ function frame(ts) {
       if (dyn.imageEl) dyn.imageEl.style.filter = dyn.base + (b > 0.05 ? ` brightness(${(1 + b * 0.6).toFixed(2)})` : '');
       if (dyn.body) dyn.body.setAttribute('fill', b > 0.04 ? dyn.colorFill[inst.props.color] : dyn.colorDim[inst.props.color]);
     } else if (type === 'button' && dyn) {
+      const down = !!(rt.pressed || rt.held);
       if (dyn.body) {
-        const dy = rt.pressed ? 1.5 : 0;
+        const dy = down ? 1.5 : 0;
         dyn.body.setAttribute('transform', `translate(0,${dy})`);
-        dyn.body.style.filter = rt.pressed ? 'brightness(0.88)' : '';
+        dyn.body.style.filter = down ? 'brightness(0.88)' : '';
       } else if (dyn.cap) {
-        dyn.cap.setAttribute('r', rt.pressed ? 7.2 : 8.2);
-        dyn.cap.setAttribute('fill', rt.pressed ? '#9a9ea4' : '#b6bac0');
+        dyn.cap.setAttribute('r', down ? 7.2 : 8.2);
+        dyn.cap.setAttribute('fill', rt.held ? '#f97316' : (down ? '#9a9ea4' : '#b6bac0'));
+        dyn.cap.setAttribute('stroke', rt.held ? '#c2410c' : '#6e7278');
       }
     } else if (type === 'spst' && dyn) {
       dyn.knob.setAttribute('x', inst.props.closed ? dyn.onX : dyn.offX);

@@ -145,8 +145,8 @@
         </defs>
         <g id="world">
           <g id="boardL"></g>
-          <g id="partsL"></g>
           <g id="wiresL"></g>
+          <g id="partsL"></g>
           <g id="fxL"></g>
         </g>
       </svg>
@@ -183,14 +183,17 @@
 
   <!-- Serial Monitor -->
   <aside id="serial-monitor">
-    <div id="serial-resize" class="serial-resize" title="Drag to resize"></div>
     <div class="serial-head">
-      <span>Arduino Serial Monitor</span>
-      <button id="serial-close" aria-label="close">✕</button>
+      <span>serial monitor</span>
+      <button id="serial-close" aria-label="close" title="close">
+        <svg viewBox="0 0 12 12" width="10" height="10" aria-hidden="true">
+          <path d="M2.2 2.2 9.8 9.8M9.8 2.2 2.2 9.8" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+        </svg>
+      </button>
     </div>
     <div class="serial-output" id="serial-output"></div>
     <div class="serial-controls">
-      <button id="serial-clear">Clear Output</button>
+      <button type="button" id="serial-clear">clear</button>
     </div>
   </aside>
 
