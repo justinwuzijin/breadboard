@@ -110,6 +110,22 @@ function railHoleNear(rail, col) {
 
 const NET_COLORS = ['#3fa54a', '#2f6fed', '#e07b39', '#8e44ad', '#16a085', '#e8b53a'];
 
+/** Map CircuitJS LED RGB (0–1) → breadboard LED colour prop. */
+function ledColorFromRgb(r = 0, g = 0, b = 0) {
+  if (g >= 0.45 && r >= 0.45 && b < 0.35) return 'yellow';
+  if (g >= r && g >= b && g >= 0.35) return 'green';
+  return 'red';
+}
+
+/** Infer LED colour from a nearby schematic label (e.g. "NS Yellow"). */
+function ledColorFromLabel(text = '') {
+  const t = String(text).toLowerCase();
+  if (/\byellow\b/.test(t)) return 'yellow';
+  if (/\bgreen\b/.test(t)) return 'green';
+  if (/\bred\b/.test(t)) return 'red';
+  return null;
+}
+
 const SKIP_TYPES = new Set([
   'ScopeElm', 'OutputElm', 'ProbeElm', 'BoxElm', 'TextElm', 'GraphicElm',
   'RelayElm',
@@ -155,9 +171,24 @@ export function readLiveCircuit(sim) {
   const elems = [];   // passives / switches / wires / power markers
   const gates = [];   // logic
   const unsupported = new Set();
+  const labels = [];  // schematic TextElm labels used to colour LEDs
 
   for (const elm of elms) {
     const type = elm.getType();
+    // Collect labels before the skip set — Lab 4 names LEDs "NS Yellow", etc.
+    if (type === 'TextElm') {
+      const text = elm.text_0 || elm.text || '';
+      const color = ledColorFromLabel(text);
+      if (color) {
+        labels.push({
+          text,
+          color,
+          x: elm.x_0 ?? elm.point1?.x_0 ?? 0,
+          y: elm.y_0 ?? elm.point1?.y_0 ?? 0,
+        });
+      }
+      continue;
+    }
     if (SKIP_TYPES.has(type)) continue;
 
     const n = elm.getPostCount();
@@ -200,7 +231,17 @@ export function readLiveCircuit(sim) {
       continue;
     }
     if (type === 'LEDElm') {
-      elems.push({ type: 'led', a: posts[0], b: posts[1] }); // a=anode side typically point1
+      const px = elm.x_0 ?? elm.point1?.x_0 ?? 0;
+      const py = elm.y_0 ?? elm.point1?.y_0 ?? 0;
+      elems.push({
+        type: 'led',
+        a: posts[0],
+        b: posts[1],
+        // Lab 4 dumps often leave every LED as red RGB; labels override below.
+        color: ledColorFromRgb(elm.colorR ?? 1, elm.colorG ?? 0, elm.colorB ?? 0),
+        x: px,
+        y: py,
+      });
       continue;
     }
     if (type === 'SwitchElm' || type === 'PushSwitchElm' || type === 'Switch2Elm'
@@ -245,6 +286,18 @@ export function readLiveCircuit(sim) {
 
     if (UNSUPPORTED_HINT[type]) unsupported.add(UNSUPPORTED_HINT[type]);
     else unsupported.add(type.replace(/Elm$/, ''));
+  }
+
+  // Prefer schematic labels ("NS Yellow") over RGB — Lab 4 LEDs are often all red in dump.
+  for (const e of elems) {
+    if (e.type !== 'led' || !labels.length) continue;
+    let best = null, bd = Infinity;
+    for (const lab of labels) {
+      const d = (lab.x - e.x) ** 2 + (lab.y - e.y) ** 2;
+      if (d < bd) { bd = d; best = lab; }
+    }
+    // ~120px in CircuitJS units is still "next to" the LED body
+    if (best && bd < 180 * 180) e.color = best.color;
   }
 
   // Expand 3+/N-input gates into binary trees of 2-input gates (74xx packing)
@@ -613,8 +666,13 @@ export function buildBreadboard(circuit, api) {
     return netA;
   };
 
-  for (const e of elems) {
-    if (e.type !== 'led' && e.type !== 'lout') continue;
+  // Place LEDs left→right in schematic order (Lab 4: NS R/Y/G, then EW R/Y/G).
+  const ledElems = elems
+    .filter((e) => e.type === 'led' || e.type === 'lout')
+    .slice()
+    .sort((a, b) => (a.x ?? 0) - (b.x ?? 0) || (a.y ?? 0) - (b.y ?? 0));
+
+  for (const e of ledElems) {
     const signalNet = ledDriveNet(e);
     if (isGroundR(signalNet)) continue; // nowhere to drive from
     // Skip indicators that aren't tied to a gate we placed on the board
@@ -633,8 +691,9 @@ export function buildBreadboard(circuit, api) {
     const lHoles = [`${c0 + 3}a`, `${c0 + 4}a`];
     // Final occupancy check — never put two part pins in one hole
     if ([...rHoles, ...lHoles].some((h) => occupied.has(h))) continue;
+    const ledColor = e.color || 'red';
     api.addPart(series, { holes: rHoles, rot: 0, props: { ohms: series.props?.ohms || ohms } });
-    api.addPart(DEF_BY_ID.get('led'), { holes: lHoles, rot: 0 });
+    api.addPart(DEF_BY_ID.get('led'), { holes: lHoles, rot: 0, props: { color: ledColor } });
     markHoles([...rHoles, ...lHoles]);
     for (let k = 0; k < LED_STRIDE; k++) {
       if (c0 + k <= COLS) ledUsedCols.add(c0 + k);

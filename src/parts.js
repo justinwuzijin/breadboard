@@ -173,7 +173,8 @@ function dipPins(half, spanRows, names) {
 
 const LED_GLOW = { red: '#ff5a52', green: '#57e06a', yellow: '#ffe14a' };
 const DOME_LIT = { red: '#c43c36', green: '#3aad4a', yellow: '#d0b02c' };
-const DOME_DIM = { red: '#7a3834', green: '#3a6840', yellow: '#7a7034' };
+// Unlit colours stay clearly R / Y / G so Lab 4 traffic-light order reads at a glance
+const DOME_DIM = { red: '#8a3530', green: '#2f7a3a', yellow: '#b89620' };
 const LED_RIM = { red: '#9a7a74', green: '#7a9074', yellow: '#9a9068' };
 
 function drawLED(g, inst) {
