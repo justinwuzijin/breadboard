@@ -267,6 +267,9 @@ export function readLiveCircuit(sim) {
       }
       if (gateType === 'dff') {
         // posts: 0=D, 1=Q, 2=Qn, 3=CLK, optional 4=R, 5=S
+        // flags&8 = CircuitJS "Invert Set/Reset" (active-low bubbles). Real
+        // CD4013 SET/RST are active-high, so the breadboard builder must flip
+        // idle-high schematic ties to GND (see invertSR handling below).
         gates.push({
           gateType: 'dff',
           inputs: [posts[3], posts[0]], // CLK, D
@@ -274,6 +277,7 @@ export function readLiveCircuit(sim) {
           qn: posts[2],
           rst: posts[4] || null,
           set: posts[5] || null,
+          invertSR: !!((elm.flags ?? 0) & 8),
         });
         continue;
       }
@@ -440,7 +444,15 @@ export function buildBreadboard(circuit, api) {
     if (col < 1 || col > COLS) return;
     if (isGroundR(root)) { powerMinus.set(`${col}:${top ? 1 : 0}`, { col, top }); return; }
     if (isPlusR(root)) { powerPlus.set(`${col}:${top ? 1 : 0}`, { col, top }); return; }
-    if (pinHole && !netPinHole.has(root)) netPinHole.set(root, pinHole);
+    // Prefer a direct pin→pin wire when two IC pins share a net (ring counters,
+    // gate chains). Column jumpers via allocTap silently drop when the board
+    // is dense — that was killing Lab 4's last ring stage.
+    if (pinHole) {
+      if (!netPinHole.has(root)) netPinHole.set(root, pinHole);
+      else if (netPinHole.get(root) !== pinHole) {
+        signalWires.push({ a: netPinHole.get(root), b: pinHole });
+      }
+    }
     if (netHome.has(root)) {
       const h = netHome.get(root);
       if (h.col !== col || h.top !== top) jumpers.push({ a: h, b: { col, top } });
@@ -449,6 +461,23 @@ export function buildBreadboard(circuit, api) {
 
   const placed = { r: 0, led: 0, sw: 0, lin: 0, lout: 0 };
   let swCursor = 1;
+
+  // Lab 4 "Reset from Fault" is an enable hold: the signal net feeds inverted
+  // SET/RST on the DFFs. While held (active-low on that bus) the ring can run
+  // and LED cathodes are grounded through the same button; released → LEDs off.
+  const enableNets = new Set();
+  for (const g of gates) {
+    if (g.gateType !== 'dff' || !g.invertSR) continue;
+    for (const k of [g.set, g.rst]) {
+      if (!k) continue;
+      const r = find(k);
+      if (!isPlusR(r) && !isGroundR(r)) enableNets.add(r);
+    }
+  }
+  /** @type {string|null} */
+  let enableNet = null;
+  /** Button hole on the enable bus — LED cathodes wire here directly. */
+  let enableHole = null;
 
   // 1) Pushbuttons straddle the ravine (e↔f) so they bridge top and bottom halves
   for (const e of elems) {
@@ -471,13 +500,37 @@ export function buildBreadboard(circuit, api) {
     // Tactile switch: a1↔a2 and b1↔b2 are ALWAYS shorted. Only a1↔b1
     // closes on press (top↔bottom, same column). Never put the two switch
     // nets on a1/a2 (c0 and c0+2 top) — that welds them closed permanently.
+    const wireHoldEnable = (sigNet) => {
+      // 10k pull-up to VCC; press shorts signal → GND (active-low enable bus).
+      // Pull must use column c0+1 — NOT c0+2. The tactile switch permanently
+      // shorts a1↔a2 (c0↔c0+2), so putting VCC on c0+2 would hard-short the
+      // rail to GND whenever the button is held.
+      const pull = nearestResistorDef(10000);
+      const pullCol = c0 + 1;
+      const pullHoles = [`${c0}b`, `${pullCol}b`];
+      if (pullCol < SWITCH_COLS && !pullHoles.some((h) => occupied.has(h))) {
+        api.addPart(pull, { holes: pullHoles, rot: 0, props: { ohms: 10000 } });
+        markHoles(pullHoles);
+        placed.r++;
+        powerPlus.set(`${pullCol}:1`, { col: pullCol, top: true });
+      }
+      registerNet(sigNet, c0, true, `${c0}e`);
+      powerMinus.set(`${c0}:0`, { col: c0, top: false });
+      enableNet = sigNet;
+      enableHole = `${c0}e`;
+      placed.sw++;
+    };
     if (e.type === 'lin') {
       // signal on top, ground on bottom — press pulls signal low
       registerNet(netA, c0, true);
       powerMinus.set(`${c0}:0`, { col: c0, top: false });
       placed.lin++;
+    } else if (isPlusR(netA) && !isPlusR(netB) && enableNets.has(netB)) {
+      wireHoldEnable(netB);
+    } else if (isPlusR(netB) && !isPlusR(netA) && enableNets.has(netA)) {
+      wireHoldEnable(netA);
     } else if (isPlusR(netA) && !isPlusR(netB)) {
-      // Lab 4 CLK/Reset style: VCC -- switch -- signal (active-high pulse)
+      // CLK style: VCC -- switch -- signal (active-high pulse)
       registerNet(netA, c0, true);
       registerNet(netB, c0, false);
       placed.sw++;
@@ -549,26 +602,33 @@ export function buildBreadboard(circuit, api) {
     registerNet(outputNet, parseInt(outHole.match(/\d+/)[0], 10), outHole.endsWith('e'), outHole);
 
     if (chip.type === 'dff') {
-      if (gate.rst) {
-        const h = icInst.holes[pins.rst];
-        registerNet(find(gate.rst), parseInt(h.match(/\d+/)[0], 10), h.endsWith('e'), h);
-      } else if (pins.rst != null) {
-        const h = icInst.holes[pins.rst];
-        powerMinus.set(
-          `${parseInt(h.match(/\d+/)[0], 10)}:${h.endsWith('e') ? 1 : 0}`,
-          { col: parseInt(h.match(/\d+/)[0], 10), top: h.endsWith('e') },
-        );
-      }
-      if (gate.set) {
-        const h = icInst.holes[pins.set];
-        registerNet(find(gate.set), parseInt(h.match(/\d+/)[0], 10), h.endsWith('e'), h);
-      } else if (pins.set != null) {
-        const h = icInst.holes[pins.set];
-        powerMinus.set(
-          `${parseInt(h.match(/\d+/)[0], 10)}:${h.endsWith('e') ? 1 : 0}`,
-          { col: parseInt(h.match(/\d+/)[0], 10), top: h.endsWith('e') },
-        );
-      }
+      // Wire SET/RST onto the real CD4013 (active-high). When the schematic
+      // uses CircuitJS inverted S/R, an idle +5 V rail means "inactive" and
+      // must become GND on the breadboard; a pulsed signal net stays a signal
+      // (Lab 4 Reset-from-Fault: press → high → assert).
+      const tieSR = (postIdx, netKey) => {
+        if (postIdx == null) return;
+        const h = icInst.holes[postIdx];
+        const col = parseInt(h.match(/\d+/)[0], 10);
+        const top = h.endsWith('e');
+        const key = `${col}:${top ? 1 : 0}`;
+        if (!netKey) {
+          powerMinus.set(key, { col, top });
+          return;
+        }
+        const root = find(netKey);
+        if (gate.invertSR && isPlusR(root)) {
+          powerMinus.set(key, { col, top });
+          return;
+        }
+        if (gate.invertSR && isGroundR(root)) {
+          powerPlus.set(key, { col, top });
+          return;
+        }
+        registerNet(root, col, top, h);
+      };
+      tieSR(pins.rst, gate.rst);
+      tieSR(pins.set, gate.set);
     }
   }
 
@@ -698,8 +758,9 @@ export function buildBreadboard(circuit, api) {
     for (let k = 0; k < LED_STRIDE; k++) {
       if (c0 + k <= COLS) ledUsedCols.add(c0 + k);
     }
-    // Signal feeds the resistor's free end (column c0); cathode column → GND.
-    // Wire IC output pin → resistor column directly so LEDs always light.
+    // Signal feeds the resistor's free end (column c0). Cathodes go to GND,
+    // or — when Lab 4 has a hold-to-enable bus — to that bus so LEDs only
+    // light while Reset-from-Fault is held (button shorts the bus to GND).
     const tap = allocTap(c0, true);
     const src = netPinHole.get(signalNet);
     if (src && tap) {
@@ -710,7 +771,14 @@ export function buildBreadboard(circuit, api) {
     } else {
       registerNet(signalNet, c0, true);
     }
-    powerMinus.set(`${c0 + 4}:1`, { col: c0 + 4, top: true });
+    if (enableHole) {
+      // Share the LED cathode pin hole (same as IC pin→pin wires).
+      const cath = `${c0 + 4}a`;
+      if (HOLE_BY_ID.has(cath)) signalWires.push({ a: enableHole, b: cath });
+      else powerMinus.set(`${c0 + 4}:1`, { col: c0 + 4, top: true });
+    } else {
+      powerMinus.set(`${c0 + 4}:1`, { col: c0 + 4, top: true });
+    }
     placed.r++;
     placed.led++;
     if (e.type === 'lout') placed.lout++;
